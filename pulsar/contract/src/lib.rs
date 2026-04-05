@@ -232,6 +232,52 @@ impl PulsarChannel {
             .get(&CHANNEL_KEY)
             .expect("channel not found")
     }
+
+    /// Reclaim funds if channel has expired without settlement.
+    ///
+    /// This allows the sender to recover their funds if the recipient
+    /// never closes the channel before the expiry timestamp.
+    ///
+    /// # Panics
+    /// - If channel is not found
+    /// - If channel is already closed
+    /// - If current time is before expiry
+    /// - If caller is not the sender
+    ///
+    /// Requirements: Time-locked refund safety mechanism
+    pub fn reclaim_expired(env: Env) {
+        let mut state: ChannelState = env
+            .storage()
+            .persistent()
+            .get(&CHANNEL_KEY)
+            .expect("channel not found");
+
+        // Ensure channel is still open
+        if state.status != ChannelStatus::Open {
+            panic!("channel already closed");
+        }
+
+        // Check if expired
+        let current_time = env.ledger().timestamp();
+        if current_time <= state.expiry {
+            panic!("channel not yet expired");
+        }
+
+        // Require sender authorization
+        state.sender.require_auth();
+
+        // Refund full amount to sender
+        let token_client = token::Client::new(&env, &state.token);
+        token_client.transfer(
+            &env.current_contract_address(),
+            &state.sender,
+            &state.amount,
+        );
+
+        // Mark channel as closed
+        state.status = ChannelStatus::Closed;
+        env.storage().persistent().set(&CHANNEL_KEY, &state);
+    }
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -359,5 +405,64 @@ mod tests {
         let sig = BytesN::from_array(&env, &[0u8; 64]);
         // Try to claim more than deposited — should panic before sig check
         client.close_channel(&600, &sig);
+    }
+
+    #[test]
+    fn test_reclaim_expired_channel() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let sender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        let admin = Address::generate(&env);
+
+        let (token, token_admin) = create_token(&env, &admin);
+        let token_addr = token.address.clone();
+        token_admin.mint(&sender, &1000);
+
+        let contract_id = env.register_contract(None, PulsarChannel);
+        let client = PulsarChannelClient::new(&env, &contract_id);
+
+        // Open channel with expiry in 100 seconds
+        let expiry = env.ledger().timestamp() + 100;
+        client.open_channel(&sender, &recipient, &token_addr, &500, &expiry);
+
+        // Fast-forward time past expiry
+        env.ledger().with_mut(|li| li.timestamp = expiry + 1);
+
+        // Sender reclaims expired funds
+        client.reclaim_expired();
+
+        // Verify sender got full refund
+        assert_eq!(token.balance(&sender), 1000);
+        assert_eq!(token.balance(&contract_id), 0);
+
+        // Verify channel is closed
+        let state = client.get_channel();
+        assert_eq!(state.status, ChannelStatus::Closed);
+    }
+
+    #[test]
+    #[should_panic(expected = "channel not yet expired")]
+    fn test_cannot_reclaim_before_expiry() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let sender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        let admin = Address::generate(&env);
+
+        let (token, token_admin) = create_token(&env, &admin);
+        let token_addr = token.address.clone();
+        token_admin.mint(&sender, &1000);
+
+        let contract_id = env.register_contract(None, PulsarChannel);
+        let client = PulsarChannelClient::new(&env, &contract_id);
+
+        let expiry = env.ledger().timestamp() + 100;
+        client.open_channel(&sender, &recipient, &token_addr, &500, &expiry);
+
+        // Try to reclaim before expiry — should panic
+        client.reclaim_expired();
     }
 }

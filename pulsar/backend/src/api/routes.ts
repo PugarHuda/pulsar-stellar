@@ -16,7 +16,7 @@
 import { Router, type Request, type Response } from 'express'
 import { z } from 'zod'
 import { Keypair } from '@stellar/stellar-sdk'
-import { openChannel, settleChannel, deployFreshContract } from '../channel/manager.js'
+import { openChannel, settleChannel, deployFreshContract, getGlobalContractId } from '../channel/manager.js'
 import { getChannel } from '../channel/store.js'
 import { runAgent } from '../agent/runner.js'
 import { addClient } from './sse.js'
@@ -65,10 +65,13 @@ router.get('/status', (_req: Request, res: Response) => {
     // ignore invalid key
   }
 
+  // Use globalContractId if available, otherwise fall back to env var
+  const contractId = getGlobalContractId() ?? process.env.CONTRACT_ID ?? null
+
   res.json({
     network: 'stellar:testnet',
     aiMode: process.env.OPENROUTER_API_KEY ? 'openrouter' : process.env.ANTHROPIC_API_KEY ? 'claude' : 'mock',
-    contractId: process.env.CONTRACT_ID ?? null,
+    contractId,
     demoMode: process.env.DEMO_MODE === 'true',
     userPublicKey,
   })

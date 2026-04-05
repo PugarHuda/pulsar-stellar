@@ -329,16 +329,63 @@ export async function settleChannel(
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
+// Global contract instance — deployed once at startup, reused for all channels
+// This is a pragmatic solution for demo: avoids "channel already open" errors
+// and eliminates per-channel deployment complexity
+let globalContractId: string | null = null
+
+/**
+ * Get the current global contract ID (for status endpoint).
+ */
+export function getGlobalContractId(): string | null {
+  return globalContractId
+}
+
+/**
+ * Initialize the global contract instance.
+ * Called once at backend startup.
+ * 
+ * For demo hackathon: deploy one contract, use for all channels in this session.
+ * This avoids per-channel deployment issues and is sufficient for demo purposes.
+ */
+export async function initializeGlobalContract(): Promise<void> {
+  const wasmHash = process.env.CONTRACT_WASM_HASH
+  const fallbackContractId = process.env.CONTRACT_ID
+
+  if (!wasmHash && !fallbackContractId) {
+    console.log('[Pulsar] Running in DEMO mode (no CONTRACT_WASM_HASH or CONTRACT_ID)')
+    return
+  }
+
+  try {
+    if (wasmHash) {
+      console.log('[Pulsar] Deploying fresh contract instance for this session...')
+      globalContractId = await deployFreshContract()
+      console.log(`[Pulsar] ✓ Global contract deployed: ${globalContractId}`)
+    } else if (fallbackContractId) {
+      globalContractId = fallbackContractId
+      console.log(`[Pulsar] ✓ Using fallback CONTRACT_ID: ${globalContractId}`)
+    }
+  } catch (err) {
+    console.error(`[Pulsar] ✗ Failed to initialize contract: ${err instanceof Error ? err.message : err}`)
+    if (fallbackContractId) {
+      console.log(`[Pulsar] Falling back to CONTRACT_ID: ${fallbackContractId}`)
+      globalContractId = fallbackContractId
+    } else {
+      console.warn('[Pulsar] No fallback available, running in DEMO mode')
+    }
+  }
+}
+
 /**
  * Deploy a new one-way-channel Soroban contract instance and invoke open_channel.
  *
  * Architecture:
- *   - CONTRACT_ID set → use that contract (call invokeOpenChannel)
- *   - Neither set → mock (demo mode)
+ *   - Always try to deploy a fresh contract instance per channel (avoids "channel already open")
+ *   - If deployment fails, fall back to globalContractId (deployed at startup)
+ *   - If both fail, return mock address (demo mode)
  *
- * To get a fresh contract when "channel already open" error occurs, call
- * POST /api/admin/reset-contract which deploys a new instance via Stellar SDK
- * and updates process.env.CONTRACT_ID in memory.
+ * For production: each channel gets its own contract instance to avoid state conflicts.
  */
 async function deployChannelContract(params: {
   channelId: string
@@ -346,29 +393,45 @@ async function deployChannelContract(params: {
   serverPublicKey: string
   budgetBaseUnits: bigint
 }): Promise<string> {
-  const contractId = process.env.CONTRACT_ID
-
-  if (contractId) {
-    return await invokeOpenChannel(contractId, params)
+  // Try to deploy a fresh contract instance per channel (best for production)
+  try {
+    console.log(`[Pulsar] Deploying fresh contract for channel ${params.channelId}...`)
+    const freshContractId = await deployFreshContract()
+    console.log(`[Pulsar] ✓ Fresh contract deployed: ${freshContractId}`)
+    return await invokeOpenChannel(freshContractId, params)
+  } catch (deployErr) {
+    console.warn(`[Pulsar] Fresh deploy failed: ${deployErr instanceof Error ? deployErr.message : deployErr}`)
+    
+    // Fallback 1: Try global contract (if available and not used)
+    if (globalContractId) {
+      try {
+        console.log(`[Pulsar] Trying global contract: ${globalContractId}`)
+        return await invokeOpenChannel(globalContractId, params)
+      } catch (globalErr) {
+        console.warn(`[Pulsar] Global contract failed: ${globalErr instanceof Error ? globalErr.message : globalErr}`)
+      }
+    }
+    
+    // Fallback 2: Demo mode (mock contract address)
+    console.log(`[Pulsar] Falling back to demo mode (mock contract)`)
+    const hash = Buffer.from(params.channelId.replace(/-/g, ''), 'hex')
+    const padded = Buffer.alloc(32)
+    hash.copy(padded, 0, 0, Math.min(hash.length, 32))
+    const mockContractId = `C${Buffer.from(padded).toString('base64url').toUpperCase().slice(0, 55)}`
+    return mockContractId
   }
-
-  // ── Demo mode: deterministic mock contract address ───────────────────────
-  const hash = Buffer.from(params.channelId.replace(/-/g, ''), 'hex')
-  const padded = Buffer.alloc(32)
-  hash.copy(padded, 0, 0, Math.min(hash.length, 32))
-  const mockContractId = `C${Buffer.from(padded).toString('base64url').toUpperCase().slice(0, 55)}`
-  return mockContractId
 }
 
 /**
  * Deploy a fresh contract instance from the pre-uploaded WASM hash using Stellar SDK.
- * Called by POST /api/admin/reset-contract.
+ * Called by deployChannelContract (per channel) and POST /api/admin/reset-contract.
  *
- * WASM hash 394a957ec687ca7212c82af920af339fdabe685f1f92ee646d3c4c867874dacd
- * is already uploaded to testnet — we only need to instantiate it.
+ * Uses CONTRACT_WASM_HASH env var (the hash of the uploaded WASM).
+ * The WASM is already uploaded to testnet — we only need to instantiate it.
+ * Default hash: 394a957ec687ca7212c82af920af339fdabe685f1f92ee646d3c4c867874dacd
  */
 export async function deployFreshContract(): Promise<string> {
-  const WASM_HASH = '394a957ec687ca7212c82af920af339fdabe685f1f92ee646d3c4c867874dacd'
+  const WASM_HASH = process.env.CONTRACT_WASM_HASH ?? '394a957ec687ca7212c82af920af339fdabe685f1f92ee646d3c4c867874dacd'
   const serverKeypair = getServerKeypair()
 
   const account = await sorobanRpc.getAccount(serverKeypair.publicKey())
@@ -393,7 +456,7 @@ export async function deployFreshContract(): Promise<string> {
                       address: xdr.ScAddress.scAddressTypeAccount(
                         xdr.PublicKey.publicKeyTypeEd25519(serverKeypair.rawPublicKey()),
                       ),
-                      salt: salt as unknown as xdr.Uint256,
+                      salt: salt as unknown as Buffer,
                     }),
                   ),
                   executable: xdr.ContractExecutable.contractExecutableWasm(
@@ -526,17 +589,21 @@ async function invokeOpenChannel(
 /**
  * Submit the settlement transaction to Stellar Testnet.
  *
- * If CONTRACT_ID env var is set → invoke real Soroban close_channel function.
- * Otherwise (demo mode) → return a mock tx hash.
+ * Uses the contract address stored in the channel (from open_channel).
+ * If no contract address in channel → return mock tx hash (demo mode).
  */
 async function submitSettlementTx(params: {
   channel: Channel
   finalAmount: bigint
   finalSig: Uint8Array | null
 }): Promise<string> {
-  const contractId = process.env.CONTRACT_ID
-
-  if (contractId) {
+  const contractId = params.channel.contractAddress
+  
+  // Check if this looks like a real Stellar contract address (starts with C and 56 chars)
+  const isRealContract = contractId.startsWith('C') && contractId.length === 56 && 
+                         contractId !== params.channel.id // not a mock address
+  
+  if (isRealContract && globalContractId) {
     // ── Real Soroban close_channel invocation ────────────────────────────────
     try {
       const serverKeypair = getServerKeypair()

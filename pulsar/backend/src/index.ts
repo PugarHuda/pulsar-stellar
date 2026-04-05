@@ -11,6 +11,7 @@ import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
 import { router } from './api/routes.js'
+import { initializeGlobalContract } from './channel/manager.js'
 
 const app = express()
 const PORT = parseInt(process.env.PORT ?? '3001', 10)
@@ -40,8 +41,12 @@ app.get('/health', (_req, res) => {
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 
-app.listen(PORT, () => {
-  console.log(`
+async function startServer() {
+  // Initialize global contract instance before accepting requests
+  await initializeGlobalContract()
+
+  app.listen(PORT, () => {
+    console.log(`
 ╔═══════════════════════════════════════════╗
 ║         PULSAR — Agent Billing            ║
 ║         MPP Session on Stellar            ║
@@ -50,7 +55,13 @@ app.listen(PORT, () => {
 ║  Network:  Stellar Testnet                ║
 ║  Health:   http://localhost:${PORT}/health   ║
 ╚═══════════════════════════════════════════╝
-  `)
+    `)
+  })
+}
+
+startServer().catch((err) => {
+  console.error('[Pulsar] Failed to start server:', err)
+  process.exit(1)
 })
 
 export default app

@@ -40,6 +40,7 @@ process.env.DEMO_MODE = 'false'
 // Unset CONTRACT_ID so tests use mock contract (no real Soroban calls)
 delete process.env.CONTRACT_ID
 delete process.env.CONTRACT_WASM_PATH
+delete process.env.CONTRACT_WASM_HASH
 
 // Mock getUsdcBalance to return sufficient balance
 vi.mock('../src/stellar/config.js', async (importOriginal) => {

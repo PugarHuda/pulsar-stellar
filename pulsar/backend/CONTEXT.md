@@ -51,9 +51,9 @@ backend/
 
 | Mode | Trigger | Behavior |
 |------|---------|----------|
-| **Demo** (default) | `DEMO_MODE=true` or `CONTRACT_ID` not set | Mock contract address, mock tx hash, no real USDC needed |
-| **Production** | `CONTRACT_ID=<deployed-contract>` and `DEMO_MODE=false` | Real Soroban `open_channel` / `close_channel` on Stellar Testnet |
-| **Claude AI** | `ANTHROPIC_API_KEY` set | Real Claude claude-3-haiku-20240307 for llm_call + reasoning steps |
+| **Demo** (default) | `DEMO_MODE=true` or no `CONTRACT_WASM_HASH`/`CONTRACT_ID` | Mock contract address, mock tx hash, no real USDC needed |
+| **Production** | `CONTRACT_WASM_HASH` set and `DEMO_MODE=false` | Real Soroban contract deployed at startup, real `open_channel` / `close_channel` on Stellar Testnet |
+| **OpenRouter AI** | `OPENROUTER_API_KEY` set | Real AI via OpenRouter (qwen/qwen3.6-plus:free) for llm_call + reasoning steps |
 
 ### DEMO_MODE=true (default)
 - `deployChannelContract()` → returns deterministic mock `C...` address
@@ -61,15 +61,18 @@ backend/
 - `getUsdcBalance()` check is skipped
 - All 106 tests pass without any real testnet connection
 
-### CONTRACT_ID set (production)
-- `deployChannelContract()` → invokes `open_channel(sender, recipient, token, amount, expiry)` on Soroban
-- `submitSettlementTx()` → invokes `close_channel(commitment_amount, signature)` on Soroban
+### CONTRACT_WASM_HASH set (production)
+- Backend startup → deploys ONE fresh Soroban contract instance via `deployFreshContract()`
+- All channels in this session share the same contract instance (pragmatic for demo)
+- `deployChannelContract()` → invokes `open_channel(sender, recipient, token, amount, expiry)` on the global contract
+- `submitSettlementTx()` → invokes `close_channel(commitment_amount, signature)` on the global contract
 - Uses `sorobanRpc.simulateTransaction()` + `prepareTransaction()` + `sendTransaction()` + polling
 - Server keypair signs and submits the transaction
+- Fallback to `CONTRACT_ID` if WASM deployment fails
 
-### ANTHROPIC_API_KEY set (Claude AI)
-- `llm_call` steps → real Claude claude-3-haiku-20240307 API call
-- `reasoning` steps → real Claude API call for analysis
+### OPENROUTER_API_KEY set (real AI)
+- `llm_call` steps → real OpenRouter API call (qwen/qwen3.6-plus:free, fallback to Claude)
+- `reasoning` steps → real OpenRouter API call for analysis
 - `tool_web_search`, `tool_code_exec`, `tool_data_fetch` → simulated with realistic descriptions
 - Falls back to mock descriptions gracefully if API key not set or API call fails
 
@@ -94,5 +97,5 @@ backend/
 ## Environment variables
 See `.env.example` for full list.
 Required: `SERVER_SECRET_KEY`, `USER_SECRET_KEY`, `USDC_SAC_ADDRESS`
-Optional for production: `CONTRACT_ID` (enables real Soroban calls)
-Optional for Claude AI: `ANTHROPIC_API_KEY` (enables real LLM calls)
+Optional for production: `CONTRACT_WASM_HASH` (enables real Soroban contract deployment at startup)
+Optional for real AI: `OPENROUTER_API_KEY` (enables real LLM calls via OpenRouter)

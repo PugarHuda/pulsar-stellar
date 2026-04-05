@@ -25,24 +25,35 @@ This makes Pulsar ideal for AI agent billing where tasks involve dozens of LLM c
 | Off-chain commitment signing | ✅ Real Ed25519 signatures | ✅ Real Ed25519 signatures |
 | Signature verification | ✅ Real crypto | ✅ Real crypto |
 | USDC balance check | 🔵 Skipped | ✅ Real Horizon query |
-| Contract deployment | 🔵 Mock address | ✅ Real Soroban `open_channel` |
+| Contract deployment | 🔵 Mock address | ✅ Real Soroban deploy per channel |
+| Open channel | 🔵 Mock address | ✅ Real Soroban `open_channel` |
 | Settlement tx | 🔵 Mock hash | ✅ Real Soroban `close_channel` |
+| Expired refund | 🔵 Not available | ✅ Real Soroban `reclaim_expired` |
 | USDC transfer | 🔵 Simulated | ✅ Real on-chain transfer |
-| AI agent (llm_call) | 🔵 Mock descriptions | ✅ Real Claude API (if key set) |
-| AI agent (reasoning) | 🔵 Mock descriptions | ✅ Real Claude API (if key set) |
-| AI agent (tool calls) | 🔵 Simulated | 🔵 Simulated (realistic) |
+| AI agent (llm_call) | 🔵 Mock descriptions | ✅ Real OpenRouter API (if key set) |
+| AI agent (reasoning) | 🔵 Mock descriptions | ✅ Real OpenRouter API (if key set) |
+| AI agent (web_search) | 🔵 Mock | ✅ Real DuckDuckGo API (free) |
+| AI agent (code_exec) | 🔵 Mock | ✅ Real VM2 sandbox (local) |
+| AI agent (data_fetch) | 🔵 Mock | ✅ Real public APIs (free) |
 
 ## Demo Mode vs Production Mode
 
 | Feature | Demo Mode (default) | Production Mode |
 |---------|--------------------|--------------------|
-| Trigger | `DEMO_MODE=true` or `CONTRACT_ID` not set | `CONTRACT_ID=<address>` set |
-| Open Channel | Mock contract address (deterministic) | Real Soroban `open_channel()` call |
-| Settlement | Mock tx hash | Real Soroban `close_channel()` call |
+| Trigger | `DEMO_MODE=true` or no `CONTRACT_WASM_HASH`/`CONTRACT_ID` | `CONTRACT_WASM_HASH` set and `DEMO_MODE=false` |
+| Contract deployment | Mock contract address (deterministic) | Real Soroban contract deployed per channel (fresh instance) |
+| Open Channel | Mock contract address | Real Soroban `open_channel()` call on fresh contract |
+| Settlement | Mock tx hash | Real Soroban `close_channel()` call on channel's contract |
+| Expired refund | Not available | Real Soroban `reclaim_expired()` for time-locked safety |
 | USDC balance check | Skipped | Real Horizon balance check |
 | Testnet USDC needed | No | Yes |
-| AI agent | Mock step descriptions | Real Claude API (if `ANTHROPIC_API_KEY` set) |
+| AI agent (LLM) | Mock descriptions | Real OpenRouter API (if `OPENROUTER_API_KEY` set) |
+| AI tools (web search) | Mock | Real DuckDuckGo API (free, no key needed) |
+| AI tools (code exec) | Mock | Real VM2 sandbox (local, secure) |
+| AI tools (data fetch) | Mock | Real public APIs (free tier) |
 | Tests | All 106 pass | Same (tests always use demo mode) |
+
+**Note:** In production mode, each channel gets its own fresh Soroban contract instance to avoid state conflicts. This ensures proper isolation and allows multiple concurrent channels.
 
 ## Architecture
 
@@ -212,13 +223,13 @@ Now `open_channel` and `close_channel` will invoke the real Soroban contract on 
 
 ## Agent Step Types
 
-| Step Type | Cost | Real (Claude) | Simulated |
-|-----------|------|---------------|-----------|
-| LLM Call | 0.05 USDC | ✅ Claude claude-3-haiku | Mock description |
-| Reasoning | 0.01 USDC | ✅ Claude claude-3-haiku | Mock description |
-| Web Search | 0.02 USDC | 🔵 Simulated | Realistic description |
-| Code Exec | 0.03 USDC | 🔵 Simulated | Realistic description |
-| Data Fetch | 0.02 USDC | 🔵 Simulated | Realistic description |
+| Step Type | Cost | Real (Production) | Demo Mode |
+|-----------|------|-------------------|-----------|
+| LLM Call | 0.05 USDC | ✅ OpenRouter qwen/qwen3.6-plus:free | Mock description |
+| Reasoning | 0.01 USDC | ✅ OpenRouter qwen/qwen3.6-plus:free | Mock description |
+| Web Search | 0.02 USDC | ✅ Real DuckDuckGo API (free) | Mock description |
+| Code Exec | 0.03 USDC | ✅ Real VM2 sandbox (local) | Mock description |
+| Data Fetch | 0.02 USDC | ✅ Real public APIs (free) | Mock description |
 
 ## Correctness Properties
 
@@ -245,10 +256,30 @@ npm test
 - **Backend**: Node.js 20, TypeScript, Express
 - **Stellar**: `@stellar/stellar-sdk` v14, `@stellar/mpp` (MPP Session)
 - **Contract**: Soroban one-way-channel contract (Rust)
-- **AI**: Anthropic Claude claude-3-haiku-20240307 (optional)
+- **AI**: OpenRouter API (qwen/qwen3.6-plus:free, fallback to Claude)
+- **AI Tools**: DuckDuckGo API (free), VM2 sandbox (local), Public APIs (free)
 - **Frontend**: React 18, Vite, Tailwind CSS
 - **Testing**: Vitest + fast-check (property-based testing)
 - **Network**: Stellar Testnet
+
+## Soroban Contract
+
+**File:** `pulsar/contract/src/lib.rs`
+
+**Functions:**
+- `open_channel(sender, recipient, token, amount, expiry)` — escrow USDC from sender
+- `close_channel(commitment_amount, signature)` — verify Ed25519 sig, transfer funds
+- `reclaim_expired()` — time-locked refund if channel expires without settlement
+- `get_channel()` — return ChannelState
+
+**Advanced Stellar Features Used:**
+- ✅ Soroban persistent storage for channel state
+- ✅ Stellar Asset Contract (SAC) integration for USDC
+- ✅ Ed25519 cryptographic verification (env.crypto().ed25519_verify)
+- ✅ Address authorization (require_auth)
+- ✅ Time-locked operations (env.ledger().timestamp)
+- ✅ XDR encoding/decoding for channel ID
+- ✅ Contract-to-contract calls (token client)
 
 ## Key Constants (Testnet)
 

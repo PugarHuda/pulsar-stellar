@@ -1,9 +1,9 @@
 # Backend Context — Pulsar
 
-## Tujuan
-Express API server yang mengelola lifecycle payment channel MPP Session di Stellar Testnet.
+## Purpose
+Express API server managing the full lifecycle of MPP Session payment channels on Stellar Testnet.
 
-## Struktur
+## Structure
 ```
 backend/
 ├── src/
@@ -12,8 +12,9 @@ backend/
 │   │   ├── store.ts      # In-memory channel state store (Map<string, Channel>)
 │   │   └── manager.ts    # openChannel, signCommitment, settleChannel
 │   ├── agent/
+│   │   ├── llm.ts        # Claude API integration (callClaude, isClaudeAvailable)
 │   │   ├── steps.ts      # Step types, costs, generateTaskSteps()
-│   │   └── runner.ts     # runAgent() — mock AI task execution + SSE events
+│   │   └── runner.ts     # runAgent() — real/mock AI task execution + SSE events
 │   ├── api/
 │   │   ├── sse.ts        # SSE manager (addClient, broadcast)
 │   │   └── routes.ts     # Express routes (4 REST + 1 SSE)
@@ -51,6 +52,7 @@ backend/
 |------|---------|----------|
 | **Demo** (default) | `DEMO_MODE=true` or `CONTRACT_ID` not set | Mock contract address, mock tx hash, no real USDC needed |
 | **Production** | `CONTRACT_ID=<deployed-contract>` and `DEMO_MODE=false` | Real Soroban `open_channel` / `close_channel` on Stellar Testnet |
+| **Claude AI** | `ANTHROPIC_API_KEY` set | Real Claude claude-3-haiku-20240307 for llm_call + reasoning steps |
 
 ### DEMO_MODE=true (default)
 - `deployChannelContract()` → returns deterministic mock `C...` address
@@ -64,25 +66,32 @@ backend/
 - Uses `sorobanRpc.simulateTransaction()` + `prepareTransaction()` + `sendTransaction()` + polling
 - Server keypair signs and submits the transaction
 
+### ANTHROPIC_API_KEY set (Claude AI)
+- `llm_call` steps → real Claude claude-3-haiku-20240307 API call
+- `reasoning` steps → real Claude API call for analysis
+- `tool_web_search`, `tool_code_exec`, `tool_data_fetch` → simulated with realistic descriptions
+- Falls back to mock descriptions gracefully if API key not set or API call fails
+
 ## Key concepts
-- **Channel**: one-way payment channel di Soroban, escrow USDC dari user
+- **Channel**: one-way payment channel on Soroban, escrows USDC from user
 - **Commitment**: off-chain signed message, cumulative amount, 0 on-chain tx
-- **Settlement**: 1 on-chain tx untuk close channel + transfer ke server + refund ke user
-- **Agent steps**: mock deterministik — LLM_CALL (0.05 USDC), TOOL_CALL (0.02 USDC), REASONING (0.01 USDC)
+- **Settlement**: 1 on-chain tx to close channel + transfer to server + refund to user
+- **Agent steps**: LLM_CALL (0.05 USDC), TOOL_CALL (0.02-0.03 USDC), REASONING (0.01 USDC)
 
 ## Correctness properties (fast-check)
-1. Monotonic commitment: setiap commitment >= sebelumnya
-2. Budget ceiling: commitment tidak pernah melebihi budget
+1. Monotonic commitment: each commitment >= previous
+2. Budget ceiling: commitment never exceeds budget
 3. Cumulative sum: final commitment = sum of all step costs
-4. Refund correctness: refund = budget - final_commitment (non-negatif)
-5. Single settlement: channel hanya bisa di-settle sekali
+4. Refund correctness: refund = budget - final_commitment (non-negative)
+5. Single settlement: channel can only be settled once
 6. Serialization round-trip: serialize → deserialize = identity
-7. Signature verifiability: commitment yang di-sign server selalu bisa diverifikasi
-8. Deterministic steps: generateTaskSteps(task) selalu sama untuk input sama
-9. Budget halt: agent berhenti sebelum melebihi budget
-10. State transition: open → closed, tidak bisa kembali
+7. Signature verifiability: commitment signed by server always verifiable
+8. Deterministic steps: generateTaskSteps(task) always same for same input
+9. Budget halt: agent stops before exceeding budget
+10. State transition: open → closed, cannot go back
 
 ## Environment variables
-Lihat `.env.example` untuk daftar lengkap.
-Wajib diset sebelum run: `SERVER_SECRET_KEY`, `USER_SECRET_KEY`, `USDC_SAC_ADDRESS`
-Optional untuk production: `CONTRACT_ID` (enables real Soroban calls)
+See `.env.example` for full list.
+Required: `SERVER_SECRET_KEY`, `USER_SECRET_KEY`, `USDC_SAC_ADDRESS`
+Optional for production: `CONTRACT_ID` (enables real Soroban calls)
+Optional for Claude AI: `ANTHROPIC_API_KEY` (enables real LLM calls)

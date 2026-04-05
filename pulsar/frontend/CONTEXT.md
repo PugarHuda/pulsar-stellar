@@ -1,17 +1,17 @@
 # Frontend Context — Pulsar
 
-## Tujuan
-React/Vite UI untuk demo interaksi lengkap dengan Pulsar payment channel lifecycle.
+## Purpose
+React/Vite UI for complete interactive demo of Pulsar payment channel lifecycle.
 
-## Struktur
+## Structure
 ```
 frontend/
 ├── src/
 │   ├── components/
-│   │   ├── ChannelPanel.tsx    # Form budget + open channel + status display
-│   │   ├── TaskPanel.tsx       # Task input + real-time SSE step list
-│   │   └── SettlementPanel.tsx # Settle button + txHash + explorer link
-│   ├── App.tsx                 # Root component, state management, SSE client
+│   │   ├── ChannelPanel.tsx    # Form budget + open channel + copy ID + contract explorer link
+│   │   ├── TaskPanel.tsx       # Task input + real-time SSE step list + progress bar + copy result
+│   │   └── SettlementPanel.tsx # Settle button + receipt timeline + copy TX hash + explorer link
+│   ├── App.tsx                 # Root component, state management, SSE client, session stats
 │   ├── main.tsx                # React mount + Tailwind
 │   └── index.css               # Tailwind directives
 ├── index.html
@@ -25,22 +25,30 @@ frontend/
 ```
 App state:
   channelId: string | null
-  channelStatus: 'idle' | 'open' | 'running' | 'completed' | 'closed'
-  steps: AgentStepEvent[]
-  settlement: SettlementResult | null
-  error: string | null
+  appStatus: 'idle' | 'channel_open' | 'task_running' | 'task_complete' | 'settled'
+  sseEvents: SseEvent[]
+  totalCostUsdc: number
+  remainingBudgetUsdc: number
+  totalChannelsOpened: number  (session stat)
+  totalUsdcSpent: number       (session stat)
 
-SSE events dari GET /api/events:
-  'step'           → append ke steps[]
-  'task_complete'  → update channelStatus = 'completed'
-  'budget_exhausted' → update channelStatus = 'completed' + error
-  'error'          → set error
+SSE events from GET /api/events:
+  'step'             → append to sseEvents[]
+  'task_complete'    → update appStatus = 'task_complete'
+  'budget_exhausted' → update appStatus = 'task_complete' + warning
+  'error'            → set error
 ```
 
-## Komponen
-- **ChannelPanel**: input budget (USDC), tombol "Open Channel", tampilkan channelId + status badge
-- **TaskPanel**: input task description, tombol "Run Agent", real-time step list dengan cost per step
-- **SettlementPanel**: tombol "Settle Channel", tampilkan final cost + refund + txHash + link explorer
+## Components
+- **ChannelPanel**: budget input, "Open Channel" button, channel ID with copy button, contract address with Stellar Explorer link, USDC balance check status indicator, spinner animation
+- **TaskPanel**: task description input, "Run Agent Task" button, real-time step list with type icons, budget progress bar, estimated remaining steps, "Copy Result" button, empty state when no channel
+- **SettlementPanel**: "Settle Channel" button, server earned / you get back breakdown, settlement receipt timeline, TX hash with copy button, Stellar Explorer link, success animation
+
+## App.tsx features
+- Header with Pulsar logo, network badge (Stellar Testnet)
+- Step indicator: 1. Open Channel → 2. Run Agent → 3. Settle (with active/completed states)
+- Session stats: total channels opened, total USDC spent
+- SSE connection status indicator
 
 ## API calls
 - `POST /api/channels` — open channel
@@ -51,4 +59,7 @@ SSE events dari GET /api/events:
 ## Dev server
 - Frontend: http://localhost:5173
 - Backend proxy: /api → http://localhost:3001
-- Run: `npm run dev` (di folder frontend/)
+- Run: `npm run dev` (in frontend/ folder)
+
+## Test status
+24/24 tests pass

@@ -18,6 +18,20 @@ Pulsar (session mode):       100 steps = 100 off-chain commitments + 1 settlemen
 
 This makes Pulsar ideal for AI agent billing where tasks involve dozens of LLM calls and tool calls.
 
+## What's Real vs Simulated
+
+| Component | Demo Mode | Production Mode |
+|-----------|-----------|-----------------|
+| Off-chain commitment signing | ✅ Real Ed25519 signatures | ✅ Real Ed25519 signatures |
+| Signature verification | ✅ Real crypto | ✅ Real crypto |
+| USDC balance check | 🔵 Skipped | ✅ Real Horizon query |
+| Contract deployment | 🔵 Mock address | ✅ Real Soroban `open_channel` |
+| Settlement tx | 🔵 Mock hash | ✅ Real Soroban `close_channel` |
+| USDC transfer | 🔵 Simulated | ✅ Real on-chain transfer |
+| AI agent (llm_call) | 🔵 Mock descriptions | ✅ Real Claude API (if key set) |
+| AI agent (reasoning) | 🔵 Mock descriptions | ✅ Real Claude API (if key set) |
+| AI agent (tool calls) | 🔵 Simulated | 🔵 Simulated (realistic) |
+
 ## Demo Mode vs Production Mode
 
 | Feature | Demo Mode (default) | Production Mode |
@@ -27,9 +41,8 @@ This makes Pulsar ideal for AI agent billing where tasks involve dozens of LLM c
 | Settlement | Mock tx hash | Real Soroban `close_channel()` call |
 | USDC balance check | Skipped | Real Horizon balance check |
 | Testnet USDC needed | No | Yes |
+| AI agent | Mock step descriptions | Real Claude API (if `ANTHROPIC_API_KEY` set) |
 | Tests | All 106 pass | Same (tests always use demo mode) |
-
-**Demo mode is the default** — the app works fully without a deployed contract or real USDC.
 
 ## Architecture
 
@@ -45,7 +58,7 @@ User/UI              Pulsar Backend           Stellar Testnet
    | Run Agent Task       |                        |
    |--------------------->|                        |
    |                      | [step 1] sign commitment (off-chain, both modes)
-   | SSE: step 1 ←- - - - |                        |
+   | SSE: step 1 ←- - - - | [CLAUDE] real LLM call (if API key set)
    |                      | [step 2] sign commitment (off-chain, both modes)
    | SSE: step 2 ←- - - - |                        |
    |                      | ... (N steps, 0 on-chain tx)
@@ -102,6 +115,29 @@ npm run dev
 
 Open http://localhost:5173
 
+## Claude AI Integration (Optional)
+
+Pulsar can use real Claude claude-3-haiku-20240307 for `llm_call` and `reasoning` agent steps.
+
+### Setup
+
+1. Get an API key at https://console.anthropic.com/
+2. Add to `backend/.env`:
+
+```env
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+3. Restart the backend.
+
+When `ANTHROPIC_API_KEY` is set:
+- `llm_call` steps → real Claude API call with the task as prompt
+- `reasoning` steps → real Claude API call for analysis
+- `tool_web_search`, `tool_code_exec`, `tool_data_fetch` → simulated with realistic descriptions
+
+If the key is not set or the API call fails, the agent falls back to mock descriptions gracefully.
+**Tests are not affected** — they never set `ANTHROPIC_API_KEY`.
+
 ## Running with Real Stellar Testnet
 
 To use real Soroban contract calls (production mode):
@@ -133,6 +169,11 @@ npm run deploy-contract
 
 This compiles and deploys `pulsar/contract/src/lib.rs` to Stellar Testnet and prints the contract address.
 
+Or use the already-deployed contract:
+```
+CONTRACT_ID=CBHQ2SN6OMW7XLRRXU44COVWGHHFRRTLNA24EZFJ5EU2KRFYKWFUKOUE
+```
+
 ### Step 4: Configure `.env`
 
 ```env
@@ -141,6 +182,7 @@ CONTRACT_ID=C...          # deployed contract address from step 3
 DEMO_MODE=false           # enable real Soroban calls
 SERVER_SECRET_KEY=S...    # server keypair
 USER_SECRET_KEY=S...      # user keypair (must have USDC)
+ANTHROPIC_API_KEY=sk-ant-... # optional: enable real Claude AI
 ```
 
 ### Step 5: Run
@@ -168,27 +210,15 @@ Now `open_channel` and `close_channel` will invoke the real Soroban contract on 
 | POST | `/api/channels/:id/settle` | Settle on-chain |
 | GET | `/api/events` | SSE stream |
 
-## Mock Agent Steps
+## Agent Step Types
 
-| Step Type | Cost | Description |
-|-----------|------|-------------|
-| LLM Call | 0.05 USDC | Language model inference |
-| Web Search | 0.02 USDC | Tool: web search |
-| Code Exec | 0.03 USDC | Tool: code execution |
-| Data Fetch | 0.02 USDC | Tool: external API |
-| Reasoning | 0.01 USDC | Internal reasoning step |
-
-## What's Real vs Simulated
-
-| Component | Demo Mode | Production Mode |
-|-----------|-----------|-----------------|
-| Off-chain commitment signing | ✅ Real Ed25519 signatures | ✅ Real Ed25519 signatures |
-| Signature verification | ✅ Real crypto | ✅ Real crypto |
-| USDC balance check | 🔵 Skipped | ✅ Real Horizon query |
-| Contract deployment | 🔵 Mock address | ✅ Real Soroban `open_channel` |
-| Settlement tx | 🔵 Mock hash | ✅ Real Soroban `close_channel` |
-| USDC transfer | 🔵 Simulated | ✅ Real on-chain transfer |
-| Stellar Explorer link | 🔵 Mock hash URL | ✅ Real tx URL |
+| Step Type | Cost | Real (Claude) | Simulated |
+|-----------|------|---------------|-----------|
+| LLM Call | 0.05 USDC | ✅ Claude claude-3-haiku | Mock description |
+| Reasoning | 0.01 USDC | ✅ Claude claude-3-haiku | Mock description |
+| Web Search | 0.02 USDC | 🔵 Simulated | Realistic description |
+| Code Exec | 0.03 USDC | 🔵 Simulated | Realistic description |
+| Data Fetch | 0.02 USDC | 🔵 Simulated | Realistic description |
 
 ## Correctness Properties
 
@@ -215,6 +245,7 @@ npm test
 - **Backend**: Node.js 20, TypeScript, Express
 - **Stellar**: `@stellar/stellar-sdk` v14, `@stellar/mpp` (MPP Session)
 - **Contract**: Soroban one-way-channel contract (Rust)
+- **AI**: Anthropic Claude claude-3-haiku-20240307 (optional)
 - **Frontend**: React 18, Vite, Tailwind CSS
 - **Testing**: Vitest + fast-check (property-based testing)
 - **Network**: Stellar Testnet
@@ -226,6 +257,7 @@ USDC SAC:    CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA
 USDC Issuer: GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
 Soroban RPC: https://soroban-testnet.stellar.org
 Horizon:     https://horizon-testnet.stellar.org
+Contract:    CBHQ2SN6OMW7XLRRXU44COVWGHHFRRTLNA24EZFJ5EU2KRFYKWFUKOUE
 ```
 
 ## License

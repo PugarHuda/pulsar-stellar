@@ -1,10 +1,13 @@
 /**
  * agent/steps.ts
  *
- * Defines mock AI agent step types, costs, and deterministic task generation.
+ * AI agent step types, costs, and task step generation.
  *
  * Step costs are fixed and deterministic so demo results are reproducible.
- * generateTaskSteps() produces the same sequence for the same input (Req 3.3).
+ * generateTaskSteps() produces the same sequence for the same input (Req 3.3, P9).
+ *
+ * When ANTHROPIC_API_KEY is set, runner.ts will call Claude for llm_call and
+ * reasoning steps. This file only defines the step structure and costs.
  *
  * Context: See backend/CONTEXT.md
  */
@@ -32,35 +35,43 @@ interface StepTemplate {
 const STEP_TEMPLATES: StepTemplate[] = [
   {
     type: 'reasoning',
-    descriptionFn: (task) => `Analyzing task: "${task.slice(0, 50)}..."`,
+    descriptionFn: (task) => `Analyzing task requirements: "${task.slice(0, 50)}${task.length > 50 ? '...' : ''}"`,
   },
   {
     type: 'tool_web_search',
-    descriptionFn: (task) => `Searching web for relevant information about "${task.slice(0, 30)}..."`,
+    descriptionFn: (task) => `Searching web for: "${task.slice(0, 40)}${task.length > 40 ? '...' : ''}"`,
   },
   {
     type: 'llm_call',
-    descriptionFn: (task) => `Processing search results and generating initial response for task`,
+    descriptionFn: (task) => `Processing search results for task: "${task.slice(0, 35)}${task.length > 35 ? '...' : ''}"`,
   },
   {
     type: 'tool_data_fetch',
-    descriptionFn: () => `Fetching structured data from external API`,
+    descriptionFn: (task) => `Fetching structured data relevant to: "${task.slice(0, 30)}${task.length > 30 ? '...' : ''}"`,
   },
   {
     type: 'llm_call',
-    descriptionFn: () => `Synthesizing data and refining response`,
+    descriptionFn: (task) => `Synthesizing data and generating response for: "${task.slice(0, 25)}${task.length > 25 ? '...' : ''}"`,
   },
   {
     type: 'tool_code_exec',
-    descriptionFn: () => `Executing code to validate and format output`,
+    descriptionFn: () => `Executing validation code to verify output correctness`,
   },
   {
     type: 'reasoning',
-    descriptionFn: () => `Reviewing output quality and checking for errors`,
+    descriptionFn: () => `Reviewing output quality, checking for errors and inconsistencies`,
   },
   {
     type: 'llm_call',
-    descriptionFn: () => `Generating final polished response`,
+    descriptionFn: (task) => `Generating final polished response for: "${task.slice(0, 30)}${task.length > 30 ? '...' : ''}"`,
+  },
+  {
+    type: 'tool_web_search',
+    descriptionFn: (task) => `Verifying facts and cross-referencing sources for: "${task.slice(0, 25)}${task.length > 25 ? '...' : ''}"`,
+  },
+  {
+    type: 'reasoning',
+    descriptionFn: () => `Final reasoning pass: ensuring completeness and accuracy`,
   },
 ]
 
@@ -69,16 +80,14 @@ const STEP_TEMPLATES: StepTemplate[] = [
 /**
  * Generate a deterministic sequence of agent steps for a given task.
  *
- * Determinism: same taskDescription always produces same steps (Req 3.3, P6).
+ * Determinism: same taskDescription always produces same steps (Req 3.3, P9).
+ * Step count: 5-10 based on task complexity (hash of description).
  * Minimum 5 steps per task (Req 3.1).
- *
- * The number of steps is determined by a simple hash of the task description,
- * ranging from 5 to 8 steps.
  */
 export function generateTaskSteps(taskDescription: string): AgentStep[] {
-  // Deterministic step count: 5-8 based on task hash
+  // Deterministic step count: 5-10 based on task hash
   const hash = simpleHash(taskDescription)
-  const stepCount = 5 + (hash % 4) // 5, 6, 7, or 8
+  const stepCount = 5 + (hash % 6) // 5, 6, 7, 8, 9, or 10
 
   const templates = STEP_TEMPLATES.slice(0, stepCount)
   const steps: AgentStep[] = []

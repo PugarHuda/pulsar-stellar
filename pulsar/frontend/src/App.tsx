@@ -35,6 +35,10 @@ export default function App() {
   const [sseConnected, setSseConnected] = useState(false)
   const eventSourceRef = useRef<EventSource | null>(null)
 
+  // Session stats
+  const [totalChannelsOpened, setTotalChannelsOpened] = useState(0)
+  const [totalUsdcSpent, setTotalUsdcSpent] = useState(0)
+
   // Connect to SSE stream
   useEffect(() => {
     const es = new EventSource('/api/events')
@@ -44,7 +48,6 @@ export default function App() {
       setSseConnected(true)
     })
 
-    // Listen for all event types
     const eventTypes = ['step', 'task_complete', 'budget_exhausted', 'error', 'channel_settled']
     for (const type of eventTypes) {
       es.addEventListener(type, (e: MessageEvent) => {
@@ -72,45 +75,67 @@ export default function App() {
     setRemainingBudgetUsdc(budget)
     setAppStatus('channel_open')
     setSseEvents([])
+    setTotalChannelsOpened((n) => n + 1)
   }
 
   function handleTaskComplete(cost: number, remaining: number) {
     setTotalCostUsdc(cost)
     setRemainingBudgetUsdc(remaining)
     setAppStatus('task_complete')
+    setTotalUsdcSpent((n) => Math.round((n + cost) * 10_000_000) / 10_000_000)
   }
 
-  const steps = 1 + (channelId ? 1 : 0) + (appStatus === 'task_complete' || appStatus === 'settled' ? 1 : 0)
+  // Current phase index for step indicator
+  const currentPhase =
+    appStatus === 'idle' ? 0 :
+    appStatus === 'channel_open' ? 1 :
+    appStatus === 'task_complete' || appStatus === 'task_running' ? 2 :
+    3
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-stellar-900 via-stellar-700 to-pulsar-accent">
       {/* Header */}
       <header className="px-6 py-5 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
-            <span className="text-white text-sm">⚡</span>
+          <div className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center">
+            <span className="text-white text-base">⚡</span>
           </div>
           <div>
             <h1 className="text-white font-bold text-xl tracking-tight">Pulsar</h1>
-            <p className="text-white/60 text-xs">AI Agent Billing · MPP Session · Stellar</p>
+            <p className="text-white/60 text-xs">AI Agent Billing · MPP Session</p>
           </div>
+          {/* Network badge */}
+          <span className="ml-2 px-2 py-0.5 rounded-full bg-white/10 border border-white/20 text-white/70 text-xs font-medium">
+            Stellar Testnet
+          </span>
         </div>
 
-        {/* SSE status */}
-        <div className="flex items-center gap-2">
-          <span
-            className={`w-2 h-2 rounded-full ${sseConnected ? 'bg-green-400' : 'bg-red-400'}`}
-          />
-          <span className="text-white/60 text-xs">
-            {sseConnected ? 'Live' : 'Connecting...'}
-          </span>
+        <div className="flex items-center gap-4">
+          {/* Session stats */}
+          {(totalChannelsOpened > 0 || totalUsdcSpent > 0) && (
+            <div className="hidden sm:flex items-center gap-3 text-xs text-white/60">
+              <span>{totalChannelsOpened} channel{totalChannelsOpened !== 1 ? 's' : ''} opened</span>
+              <span>·</span>
+              <span>{totalUsdcSpent.toFixed(4)} USDC spent</span>
+            </div>
+          )}
+
+          {/* SSE status */}
+          <div className="flex items-center gap-2">
+            <span
+              className={`w-2 h-2 rounded-full ${sseConnected ? 'bg-green-400' : 'bg-red-400'}`}
+            />
+            <span className="text-white/60 text-xs">
+              {sseConnected ? 'Live' : 'Connecting...'}
+            </span>
+          </div>
         </div>
       </header>
 
       {/* Main content */}
       <main className="max-w-4xl mx-auto px-4 pb-12">
         {/* Hero */}
-        <div className="text-center mb-8 pt-4">
+        <div className="text-center mb-8 pt-2">
           <p className="text-white/80 text-sm max-w-lg mx-auto">
             Open a payment channel → run an AI agent task → settle with 1 on-chain transaction.
             Each step signs an off-chain commitment. Zero gas per step.
@@ -119,16 +144,22 @@ export default function App() {
 
         {/* Step indicator */}
         <div className="flex items-center justify-center gap-2 mb-8">
-          {['Open Channel', 'Run Agent', 'Settle'].map((label, i) => (
+          {(['Open Channel', 'Run Agent', 'Settle'] as const).map((label, i) => (
             <div key={label} className="flex items-center gap-2">
               <div
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
-                  i < steps
+                  i < currentPhase
                     ? 'bg-white text-stellar-700'
+                    : i === currentPhase
+                    ? 'bg-white/90 text-stellar-700 ring-2 ring-white/50'
                     : 'bg-white/20 text-white/60'
                 }`}
               >
-                <span>{i + 1}</span>
+                <span className={`w-4 h-4 rounded-full flex items-center justify-center text-xs ${
+                  i < currentPhase ? 'bg-green-500 text-white' : 'bg-current/20'
+                }`}>
+                  {i < currentPhase ? '✓' : i + 1}
+                </span>
                 <span>{label}</span>
               </div>
               {i < 2 && (
@@ -146,7 +177,7 @@ export default function App() {
             channelId={channelId}
             budgetUsdc={budgetUsdc}
             onTaskComplete={handleTaskComplete}
-        sseEvents={sseEvents as unknown as Parameters<typeof TaskPanel>[0]['sseEvents']}
+            sseEvents={sseEvents as unknown as Parameters<typeof TaskPanel>[0]['sseEvents']}
           />
 
           <SettlementPanel

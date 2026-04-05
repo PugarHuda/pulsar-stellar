@@ -1,11 +1,15 @@
 /**
  * agent/runner.ts
  *
- * Mock AI Agent Runner for Pulsar.
+ * AI Agent Runner for Pulsar.
  *
- * Simulates a multi-step AI agent task execution with deterministic costs.
+ * Executes a multi-step AI agent task with real or mock LLM calls.
  * Each step generates an off-chain commitment via Channel Manager.
  * Emits SSE events for real-time UI updates.
+ *
+ * Real vs Mock:
+ *   - ANTHROPIC_API_KEY set → real Claude API calls for llm_call + reasoning steps
+ *   - ANTHROPIC_API_KEY not set → mock descriptions (DEMO_MODE behavior)
  *
  * Key behaviors:
  * - Each step → signCommitment (0 on-chain tx)
@@ -18,6 +22,7 @@
 import { getChannel, updateChannel } from '../channel/store.js'
 import { signCommitment } from '../channel/manager.js'
 import { generateTaskSteps } from './steps.js'
+import { callClaude, isClaudeAvailable } from './llm.js'
 import { usdcToBaseUnits, baseUnitsToUsdc } from '../stellar/config.js'
 import { broadcast } from '../api/sse.js'
 import {
@@ -49,10 +54,10 @@ export interface RunAgentResult {
 // ─── Runner ───────────────────────────────────────────────────────────────────
 
 /**
- * Run a mock AI agent task against a payment channel.
+ * Run an AI agent task against a payment channel.
  *
  * Each step:
- * 1. Simulate work (delay)
+ * 1. Execute step work (real LLM call or simulated)
  * 2. Calculate new cumulative cost
  * 3. Check budget (stop if exhausted)
  * 4. Sign off-chain commitment
@@ -84,13 +89,14 @@ export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> 
 
   const steps = generateTaskSteps(taskDescription)
   const budgetUsdc = baseUnitsToUsdc(channel.budgetBaseUnits)
+  const useRealLlm = isClaudeAvailable()
 
   let completedSteps = 0
   let cumulativeCostUsdc = 0
 
   for (const step of steps) {
-    // Simulate agent work (variable delay for realism)
-    await sleepImpl(300 + Math.random() * 400)
+    // Execute step work — real LLM or simulated
+    const description = await executeStep(step.type, taskDescription, step.description, sleepImpl, useRealLlm)
 
     // Calculate new cumulative cost
     cumulativeCostUsdc = Math.round(
@@ -146,6 +152,7 @@ export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> 
       step: {
         ...step,
         index: completedSteps - 1,
+        description,
         cumulativeCostUsdc,
       },
       commitment: {
@@ -180,6 +187,93 @@ export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> 
     remainingBudgetUsdc: finalRemainingBudget,
     completedNormally: true,
   }
+}
+
+// ─── Step execution ───────────────────────────────────────────────────────────
+
+/**
+ * Execute a single agent step and return its description/result.
+ *
+ * - llm_call → real Claude API call (or mock fallback)
+ * - reasoning → real Claude API call for analysis (or mock fallback)
+ * - tool_web_search → simulated with realistic description
+ * - tool_code_exec → simulated with realistic description
+ * - tool_data_fetch → simulated with realistic description
+ */
+async function executeStep(
+  stepType: string,
+  taskDescription: string,
+  defaultDescription: string,
+  sleepImpl: (ms: number) => Promise<void>,
+  useRealLlm: boolean,
+): Promise<string> {
+  switch (stepType) {
+    case 'llm_call': {
+      if (useRealLlm) {
+        const prompt = buildLlmPrompt(taskDescription)
+        const result = await callClaude(prompt)
+        // Return a concise description of what was done
+        return `LLM analysis: ${result.slice(0, 120).replace(/\n/g, ' ')}${result.length > 120 ? '...' : ''}`
+      }
+      // Mock: simulate LLM latency
+      await sleepImpl(300 + Math.random() * 400)
+      return defaultDescription
+    }
+
+    case 'reasoning': {
+      if (useRealLlm) {
+        const prompt = buildReasoningPrompt(taskDescription)
+        const result = await callClaude(prompt)
+        return `Reasoning: ${result.slice(0, 120).replace(/\n/g, ' ')}${result.length > 120 ? '...' : ''}`
+      }
+      await sleepImpl(200 + Math.random() * 300)
+      return defaultDescription
+    }
+
+    case 'tool_web_search': {
+      // Simulate web search with realistic delay
+      await sleepImpl(400 + Math.random() * 600)
+      const query = taskDescription.slice(0, 40)
+      return `Web search completed for "${query}${taskDescription.length > 40 ? '...' : ''}" — found 12 relevant results`
+    }
+
+    case 'tool_code_exec': {
+      // Simulate code execution
+      await sleepImpl(500 + Math.random() * 500)
+      return `Code executed successfully — output validated, 0 errors, 3 assertions passed`
+    }
+
+    case 'tool_data_fetch': {
+      // Simulate data fetch
+      await sleepImpl(300 + Math.random() * 400)
+      return `Data fetched from external API — received 847 bytes, parsed 23 records`
+    }
+
+    default: {
+      await sleepImpl(200 + Math.random() * 300)
+      return defaultDescription
+    }
+  }
+}
+
+// ─── Prompt builders ──────────────────────────────────────────────────────────
+
+function buildLlmPrompt(taskDescription: string): string {
+  return (
+    `You are an AI agent completing a task. Provide a brief, focused analysis.\n\n` +
+    `Task: ${taskDescription}\n\n` +
+    `Provide a concise 2-3 sentence analysis or partial result for this task. ` +
+    `Be specific and actionable. Do not ask clarifying questions.`
+  )
+}
+
+function buildReasoningPrompt(taskDescription: string): string {
+  return (
+    `You are an AI agent reasoning about a task. Think step by step.\n\n` +
+    `Task: ${taskDescription}\n\n` +
+    `In 2-3 sentences, reason about the key considerations and approach for this task. ` +
+    `Focus on what matters most.`
+  )
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

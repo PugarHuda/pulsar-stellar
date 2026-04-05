@@ -3,7 +3,10 @@
  *
  * UI for settling a Pulsar payment channel on-chain.
  * - Shows: final cost, refund amount, tx hash + Stellar explorer link
- * - Single on-chain transaction closes the channel
+ * - Breakdown: "Server earned: X USDC | You get back: Y USDC"
+ * - Copy TX Hash button
+ * - Settlement timeline/receipt
+ * - Success animation CSS class on settlement
  *
  * Context: See frontend/CONTEXT.md
  */
@@ -33,6 +36,7 @@ export function SettlementPanel({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [settlement, setSettlement] = useState<SettlementResult | null>(null)
+  const [copiedTxHash, setCopiedTxHash] = useState(false)
 
   async function handleSettle() {
     if (!channelId) return
@@ -59,12 +63,23 @@ export function SettlementPanel({
     }
   }
 
+  async function handleCopyTxHash() {
+    if (!settlement) return
+    await navigator.clipboard.writeText(settlement.txHash)
+    setCopiedTxHash(true)
+    setTimeout(() => setCopiedTxHash(false), 2000)
+  }
+
   return (
-    <div className="bg-white rounded-2xl shadow-lg border border-gray-100 p-6">
+    <div className={`bg-white rounded-2xl shadow-lg border p-6 transition-all duration-500 ${
+      settlement ? 'border-green-300 shadow-green-100' : 'border-gray-100'
+    }`}>
       {/* Header */}
       <div className="flex items-center gap-3 mb-6">
-        <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center">
-          <span className="text-lg">🔒</span>
+        <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${
+          settlement ? 'bg-green-100' : 'bg-green-100'
+        }`}>
+          <span className="text-lg">{settlement ? '✅' : '🔒'}</span>
         </div>
         <div>
           <h2 className="text-lg font-semibold text-gray-900">Settle Channel</h2>
@@ -74,17 +89,20 @@ export function SettlementPanel({
 
       {!settlement ? (
         <div className="space-y-4">
-          {/* Pre-settlement summary */}
+          {/* Pre-settlement breakdown */}
           {taskComplete && (
             <div className="bg-gray-50 rounded-xl p-4 space-y-2">
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
+                Settlement Preview
+              </p>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-500">Amount to pay</span>
+                <span className="text-gray-500">Server earned</span>
                 <span className="font-semibold text-gray-900">
                   {totalCostUsdc.toFixed(4)} USDC
                 </span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-500">Your refund</span>
+                <span className="text-gray-500">You get back</span>
                 <span className="font-semibold text-green-600">
                   {remainingBudgetUsdc.toFixed(4)} USDC
                 </span>
@@ -96,14 +114,12 @@ export function SettlementPanel({
             </div>
           )}
 
-          {/* Error */}
           {error && (
             <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
               {error}
             </div>
           )}
 
-          {/* Settle button */}
           <button
             onClick={handleSettle}
             disabled={loading || !channelId || !taskComplete}
@@ -111,7 +127,8 @@ export function SettlementPanel({
           >
             {loading ? (
               <span className="flex items-center justify-center gap-2">
-                <span className="animate-spin">⟳</span> Settling on Stellar...
+                <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                Settling on Stellar...
               </span>
             ) : (
               'Settle Channel'
@@ -125,8 +142,8 @@ export function SettlementPanel({
           )}
         </div>
       ) : (
-        /* Settlement complete */
-        <div className="space-y-4">
+        /* Settlement complete — receipt view */
+        <div className="space-y-4 animate-fade-in">
           <div className="flex items-center gap-2 mb-2">
             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
               ✓ Settled
@@ -134,27 +151,66 @@ export function SettlementPanel({
             <span className="text-sm text-gray-500">Channel closed on Stellar Testnet</span>
           </div>
 
-          {/* Settlement details */}
-          <div className="bg-gray-50 rounded-xl p-4 space-y-3">
+          {/* Receipt timeline */}
+          <div className="relative pl-4 space-y-3">
+            <div className="absolute left-0 top-2 bottom-2 w-0.5 bg-green-200" />
+
+            <div className="relative flex items-start gap-3">
+              <div className="absolute -left-[13px] w-3 h-3 rounded-full bg-green-400 border-2 border-white" />
+              <div>
+                <p className="text-xs font-medium text-gray-700">Channel opened</p>
+                <p className="text-xs text-gray-400">Budget locked in Soroban contract</p>
+              </div>
+            </div>
+
+            <div className="relative flex items-start gap-3">
+              <div className="absolute -left-[13px] w-3 h-3 rounded-full bg-green-400 border-2 border-white" />
+              <div>
+                <p className="text-xs font-medium text-gray-700">Agent task completed</p>
+                <p className="text-xs text-gray-400">
+                  {Math.round(settlement.amountPaidUsdc / 0.05)} off-chain commitments signed
+                </p>
+              </div>
+            </div>
+
+            <div className="relative flex items-start gap-3">
+              <div className="absolute -left-[13px] w-3 h-3 rounded-full bg-green-500 border-2 border-white" />
+              <div>
+                <p className="text-xs font-medium text-gray-700">Settlement confirmed</p>
+                <p className="text-xs text-gray-400">1 on-chain transaction</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Breakdown */}
+          <div className="bg-gray-50 rounded-xl p-4 space-y-2">
             <div className="flex justify-between text-sm">
-              <span className="text-gray-500">Amount paid</span>
+              <span className="text-gray-500">Server earned</span>
               <span className="font-semibold text-gray-900">
                 {settlement.amountPaidUsdc.toFixed(4)} USDC
               </span>
             </div>
             <div className="flex justify-between text-sm">
-              <span className="text-gray-500">Refund received</span>
+              <span className="text-gray-500">You get back</span>
               <span className="font-semibold text-green-600">
                 {settlement.refundUsdc.toFixed(4)} USDC
               </span>
             </div>
           </div>
 
-          {/* Transaction hash */}
+          {/* TX Hash with copy */}
           <div>
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
-              Settlement Transaction
-            </p>
+            <div className="flex items-center justify-between mb-1.5">
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+                Settlement Transaction
+              </p>
+              <button
+                onClick={handleCopyTxHash}
+                className="text-xs px-2 py-0.5 rounded bg-gray-100 hover:bg-gray-200 text-gray-600 transition-colors"
+              >
+                {copiedTxHash ? '✓ Copied' : 'Copy TX Hash'}
+              </button>
+            </div>
             <div className="bg-gray-900 rounded-lg p-3">
               <p className="text-xs font-mono text-green-400 break-all">
                 {settlement.txHash}

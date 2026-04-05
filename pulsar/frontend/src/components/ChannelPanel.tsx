@@ -4,6 +4,10 @@
  * UI for opening a Pulsar payment channel.
  * - Input: budget amount (USDC) + user public key
  * - Output: channel ID, contract address, status badge
+ * - Copy Channel ID button
+ * - Contract address link to Stellar Explorer
+ * - USDC balance check status indicator
+ * - Spinner animation during loading
  *
  * Context: See frontend/CONTEXT.md
  */
@@ -27,10 +31,13 @@ export function ChannelPanel({ onChannelOpened }: ChannelPanelProps) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [channel, setChannel] = useState<ChannelInfo | null>(null)
+  const [copiedChannelId, setCopiedChannelId] = useState(false)
+  const [balanceStatus, setBalanceStatus] = useState<'idle' | 'checking' | 'ok' | 'error'>('idle')
 
   async function handleOpenChannel() {
     setError(null)
     setLoading(true)
+    setBalanceStatus('checking')
 
     try {
       const res = await fetch('/api/channels', {
@@ -45,17 +52,31 @@ export function ChannelPanel({ onChannelOpened }: ChannelPanelProps) {
       const data = await res.json()
 
       if (!res.ok) {
+        setBalanceStatus('error')
         throw new Error(data.error ?? 'Failed to open channel')
       }
 
+      setBalanceStatus('ok')
       setChannel(data)
       onChannelOpened(data.channelId, data.budgetUsdc)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
+      if (balanceStatus === 'checking') setBalanceStatus('error')
     } finally {
       setLoading(false)
     }
   }
+
+  async function handleCopyChannelId() {
+    if (!channel) return
+    await navigator.clipboard.writeText(channel.channelId)
+    setCopiedChannelId(true)
+    setTimeout(() => setCopiedChannelId(false), 2000)
+  }
+
+  const contractExplorerUrl = channel
+    ? `https://stellar.expert/explorer/testnet/contract/${channel.contractAddress}`
+    : null
 
   return (
     <div className="bg-white rounded-2xl shadow-lg border border-gray-100 p-6">
@@ -107,6 +128,24 @@ export function ChannelPanel({ onChannelOpened }: ChannelPanelProps) {
             />
           </div>
 
+          {/* Balance check status */}
+          {balanceStatus !== 'idle' && (
+            <div className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg ${
+              balanceStatus === 'checking' ? 'bg-blue-50 text-blue-600' :
+              balanceStatus === 'ok' ? 'bg-green-50 text-green-600' :
+              'bg-red-50 text-red-600'
+            }`}>
+              {balanceStatus === 'checking' && (
+                <>
+                  <span className="inline-block w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                  Checking USDC balance...
+                </>
+              )}
+              {balanceStatus === 'ok' && <><span>✓</span> USDC balance verified</>}
+              {balanceStatus === 'error' && <><span>✗</span> Balance check failed</>}
+            </div>
+          )}
+
           {/* Error */}
           {error && (
             <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
@@ -122,7 +161,8 @@ export function ChannelPanel({ onChannelOpened }: ChannelPanelProps) {
           >
             {loading ? (
               <span className="flex items-center justify-center gap-2">
-                <span className="animate-spin">⟳</span> Opening Channel...
+                <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                Opening Channel...
               </span>
             ) : (
               'Open Channel'
@@ -139,9 +179,44 @@ export function ChannelPanel({ onChannelOpened }: ChannelPanelProps) {
             <span className="text-sm text-gray-500">Channel active</span>
           </div>
 
-          <InfoRow label="Channel ID" value={channel.channelId} mono />
-          <InfoRow label="Contract" value={channel.contractAddress} mono truncate />
+          {/* Channel ID with copy button */}
+          <div className="flex justify-between items-start gap-2">
+            <span className="text-sm text-gray-500 shrink-0">Channel ID</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm text-gray-900 font-mono truncate max-w-[160px]" title={channel.channelId}>
+                {channel.channelId}
+              </span>
+              <button
+                onClick={handleCopyChannelId}
+                className="text-xs px-2 py-0.5 rounded bg-gray-100 hover:bg-gray-200 text-gray-600 transition-colors shrink-0"
+                title="Copy Channel ID"
+              >
+                {copiedChannelId ? '✓' : 'Copy'}
+              </button>
+            </div>
+          </div>
+
+          {/* Contract address with explorer link */}
+          <div className="flex justify-between items-start gap-2">
+            <span className="text-sm text-gray-500 shrink-0">Contract</span>
+            <a
+              href={contractExplorerUrl ?? '#'}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm text-stellar-600 hover:text-stellar-700 font-mono truncate max-w-[180px] hover:underline"
+              title={channel.contractAddress}
+            >
+              {channel.contractAddress.slice(0, 8)}...{channel.contractAddress.slice(-6)} ↗
+            </a>
+          </div>
+
           <InfoRow label="Budget" value={`${channel.budgetUsdc} USDC`} />
+
+          {/* Stellar Testnet badge */}
+          <div className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-green-400" />
+            <span className="text-xs text-gray-400">Stellar Testnet</span>
+          </div>
         </div>
       )}
     </div>

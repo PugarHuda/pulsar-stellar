@@ -1,14 +1,14 @@
 # Pulsar — Project Context
 
-## Apa ini?
-Pulsar adalah platform AI agent billing berbasis **MPP Session (payment channel)** di Stellar Testnet.
-Dibangun untuk **Stellar Hacks: Agents hackathon** (DoraHacks, deadline 14 April 2026, prize $10K).
+## What is this?
+Pulsar is an AI agent billing platform built on **MPP Session (payment channel)** on Stellar Testnet.
+Built for **Stellar Hacks: Agents hackathon** (DoraHacks, deadline 14 April 2026, prize $10K).
 
-## Keunikan utama
-Satu-satunya project yang menggunakan **MPP Session channel mode** secara production-meaningful di Stellar.
-Semua demo MPP yang ada masih level "hello world" — Pulsar adalah use case nyata: AI agent billing.
+## Core uniqueness
+The only project using **MPP Session channel mode** in a production-meaningful way on Stellar.
+All existing MPP demos are "hello world" level — Pulsar is a real use case: AI agent billing.
 
-## Flow inti
+## Core flow
 ```
 User opens channel → deposits N USDC (budget)
 Agent runs task:
@@ -23,32 +23,35 @@ User receives refund of unused budget
 |------|---------|----------|
 | **Demo** (default) | `DEMO_MODE=true` or `CONTRACT_ID` not set | Mock contract address, mock tx hash, no real USDC needed |
 | **Production** | `CONTRACT_ID=<deployed-contract>` and `DEMO_MODE=false` | Real Soroban `open_channel` / `close_channel` invocations on Stellar Testnet |
+| **Claude AI** | `ANTHROPIC_API_KEY` set | Real Claude claude-3-haiku-20240307 for llm_call + reasoning steps |
 
-### Key env vars
-- `DEMO_MODE=true` — skip real USDC balance check and Soroban calls (default)
-- `CONTRACT_ID` — deployed Soroban contract address; if set, enables real on-chain calls
-- `SERVER_SECRET_KEY` — server keypair (signs commitments + submits settlement tx)
-- `USER_SECRET_KEY` — demo user keypair
+## What's Real vs Simulated
+
+| Component | Demo Mode | Production Mode |
+|-----------|-----------|-----------------|
+| Off-chain commitment signing | ✅ Real Ed25519 | ✅ Real Ed25519 |
+| Signature verification | ✅ Real crypto | ✅ Real crypto |
+| USDC balance check | 🔵 Skipped | ✅ Real Horizon query |
+| Contract deployment | 🔵 Mock address | ✅ Real Soroban `open_channel` |
+| Settlement tx | 🔵 Mock hash | ✅ Real Soroban `close_channel` |
+| USDC transfer | 🔵 Simulated | ✅ Real on-chain transfer |
+| AI agent steps | 🔵 Mock descriptions | ✅ Real Claude API (if key set) |
 
 ## Stack
-- **Backend**: Node.js 20+, TypeScript, Express, `@stellar/mpp`, `@stellar/stellar-sdk`
+- **Backend**: Node.js 20+, TypeScript, Express, `@stellar/stellar-sdk`
 - **Frontend**: React 18, Vite, Tailwind CSS
 - **Blockchain**: Stellar Testnet, Soroban one-way-channel contract
+- **AI**: Anthropic Claude claude-3-haiku-20240307 (optional)
 - **Testing**: Vitest + fast-check (property-based testing)
 
-## Struktur folder
+## Folder structure
 ```
 pulsar/
 ├── backend/          # Express API + Channel Manager + Agent Runner
 ├── frontend/         # React UI
 ├── contract/         # Soroban Rust contract (one-way payment channel)
-└── CONTEXT.md        # ← kamu di sini
+└── CONTEXT.md        # ← you are here
 ```
-
-## Spec files
-- `.kiro/specs/pulsar/requirements.md` — 7 requirements dengan acceptance criteria
-- `.kiro/specs/pulsar/design.md` — arsitektur, data models, correctness properties
-- `.kiro/specs/pulsar/tasks.md` — 18 tasks implementasi
 
 ## Key constants (Stellar Testnet)
 - USDC SAC: `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA`
@@ -56,3 +59,8 @@ pulsar/
 - Soroban RPC: `https://soroban-testnet.stellar.org`
 - Horizon: `https://horizon-testnet.stellar.org`
 - Network passphrase: `Test SDF Network ; September 2015`
+- Deployed contract: `CBHQ2SN6OMW7XLRRXU44COVWGHHFRRTLNA24EZFJ5EU2KRFYKWFUKOUE`
+
+## Test status
+- Backend: 106/106 tests pass
+- Frontend: 24/24 tests pass

@@ -16,7 +16,7 @@
 import { Router, type Request, type Response } from 'express'
 import { z } from 'zod'
 import { Keypair } from '@stellar/stellar-sdk'
-import { openChannel, settleChannel } from '../channel/manager.js'
+import { openChannel, settleChannel, deployFreshContract } from '../channel/manager.js'
 import { getChannel } from '../channel/store.js'
 import { runAgent } from '../agent/runner.js'
 import { addClient } from './sse.js'
@@ -179,6 +179,26 @@ router.post('/channels/:id/settle', async (req: Request, res: Response) => {
   try {
     const result = await settleChannel(id)
     return res.json(result)
+  } catch (err) {
+    return handleError(err, res)
+  }
+})
+
+/**
+ * POST /api/admin/reset-contract
+ * Deploy a fresh Soroban contract instance from the pre-uploaded WASM hash.
+ * Updates process.env.CONTRACT_ID in memory so subsequent openChannel calls use it.
+ *
+ * Use this when openChannel fails with "channel already open" (contract already used).
+ *
+ * Response: { contractId: string }
+ */
+router.post('/admin/reset-contract', async (_req: Request, res: Response) => {
+  try {
+    const newContractId = await deployFreshContract()
+    process.env.CONTRACT_ID = newContractId
+    console.log(`[Pulsar] CONTRACT_ID reset to: ${newContractId}`)
+    return res.json({ contractId: newContractId })
   } catch (err) {
     return handleError(err, res)
   }

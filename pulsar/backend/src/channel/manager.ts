@@ -27,7 +27,6 @@ import {
   nativeToScVal,
   Address,
 } from '@stellar/stellar-sdk'
-import { execSync } from 'child_process'
 import { v4 as uuidv4 } from 'uuid'
 import {
   getServerKeypair,
@@ -333,11 +332,13 @@ export async function settleChannel(
 /**
  * Deploy a new one-way-channel Soroban contract instance and invoke open_channel.
  *
- * Architecture: Each payment channel = one Soroban contract instance.
- * CONTRACT_WASM_PATH env var = path to compiled WASM file (auto-deploys fresh contract)
- * CONTRACT_ID env var = fallback single contract address
+ * Architecture:
+ *   - CONTRACT_ID set → use that contract (call invokeOpenChannel)
+ *   - Neither set → mock (demo mode)
  *
- * Falls back to mock if neither is set.
+ * To get a fresh contract when "channel already open" error occurs, call
+ * POST /api/admin/reset-contract which deploys a new instance via Stellar SDK
+ * and updates process.env.CONTRACT_ID in memory.
  */
 async function deployChannelContract(params: {
   channelId: string
@@ -345,33 +346,7 @@ async function deployChannelContract(params: {
   serverPublicKey: string
   budgetBaseUnits: bigint
 }): Promise<string> {
-  const wasmPath = process.env.CONTRACT_WASM_PATH
   const contractId = process.env.CONTRACT_ID
-
-  if (wasmPath) {
-    // Deploy a fresh contract instance via Stellar CLI
-    try {
-      const stellarCli = findStellarCli()
-      if (!stellarCli) {
-        throw new Error('Stellar CLI not found. Install from https://developers.stellar.org/docs/tools/cli')
-      }
-      const serverSecret = process.env.SERVER_SECRET_KEY!
-      const cmd = `"${stellarCli}" contract deploy --wasm "${wasmPath}" --source ${serverSecret} --network testnet`
-      const output = execSync(cmd, { encoding: 'utf8', timeout: 60000 }).trim()
-      const newContractId = output.split('\n').find(line => line.trim().startsWith('C'))?.trim()
-      if (!newContractId) {
-        throw new Error(`Could not parse contract ID from stellar CLI output: ${output}`)
-      }
-      console.log(`[Pulsar] Deployed fresh contract: ${newContractId}`)
-      return await invokeOpenChannel(newContractId, params)
-    } catch (err) {
-      console.warn(`[Pulsar] WASM deploy failed, falling back to CONTRACT_ID: ${err instanceof Error ? err.message : String(err)}`)
-      if (contractId) {
-        return await invokeOpenChannel(contractId, params)
-      }
-      throw err
-    }
-  }
 
   if (contractId) {
     return await invokeOpenChannel(contractId, params)
@@ -386,25 +361,91 @@ async function deployChannelContract(params: {
 }
 
 /**
- * Find the Stellar CLI executable path.
+ * Deploy a fresh contract instance from the pre-uploaded WASM hash using Stellar SDK.
+ * Called by POST /api/admin/reset-contract.
+ *
+ * WASM hash 394a957ec687ca7212c82af920af339fdabe685f1f92ee646d3c4c867874dacd
+ * is already uploaded to testnet — we only need to instantiate it.
  */
-function findStellarCli(): string | null {
-  const candidates = [
-    'C:\\Program Files (x86)\\Stellar CLI\\stellar.exe',
-    'C:\\Program Files\\Stellar CLI\\stellar.exe',
-    'stellar',
-    process.env.STELLAR_CLI_PATH,
-  ].filter(Boolean) as string[]
+export async function deployFreshContract(): Promise<string> {
+  const WASM_HASH = '394a957ec687ca7212c82af920af339fdabe685f1f92ee646d3c4c867874dacd'
+  const serverKeypair = getServerKeypair()
 
-  for (const candidate of candidates) {
-    try {
-      execSync(`"${candidate}" --version`, { encoding: 'utf8', timeout: 5000, stdio: 'pipe' })
-      return candidate
-    } catch {
-      // not found, try next
-    }
+  const account = await sorobanRpc.getAccount(serverKeypair.publicKey())
+  const salt = Buffer.from(crypto.getRandomValues(new Uint8Array(32)))
+  const wasmHashBytes = Buffer.from(WASM_HASH, 'hex')
+
+  // Build InvokeHostFunction operation to create a new contract instance
+  const deployTx = new TransactionBuilder(account, {
+    fee: String(Number(BASE_FEE) * 100),
+    networkPassphrase: NETWORK_PASSPHRASE,
+  })
+    .addOperation(
+      xdr.Operation.fromXDR(
+        new xdr.Operation({
+          sourceAccount: null,
+          body: xdr.OperationBody.invokeHostFunction(
+            new xdr.InvokeHostFunctionOp({
+              hostFunction: xdr.HostFunction.hostFunctionTypeCreateContract(
+                new xdr.CreateContractArgs({
+                  contractIdPreimage: xdr.ContractIdPreimage.contractIdPreimageFromAddress(
+                    new xdr.ContractIdPreimageFromAddress({
+                      address: xdr.ScAddress.scAddressTypeAccount(
+                        xdr.PublicKey.publicKeyTypeEd25519(serverKeypair.rawPublicKey()),
+                      ),
+                      salt: salt as unknown as xdr.Uint256,
+                    }),
+                  ),
+                  executable: xdr.ContractExecutable.contractExecutableWasm(
+                    xdr.Hash.fromXDR(wasmHashBytes),
+                  ),
+                }),
+              ),
+              auth: [],
+            }),
+          ),
+        }).toXDR(),
+      ),
+    )
+    .setTimeout(60)
+    .build()
+
+  const simResult = await sorobanRpc.simulateTransaction(deployTx)
+  if ('error' in simResult) {
+    throw new Error(`Deploy simulation failed: ${simResult.error}`)
   }
-  return null
+
+  const preparedTx = await sorobanRpc.prepareTransaction(deployTx)
+  preparedTx.sign(serverKeypair)
+
+  const sendResult = await sorobanRpc.sendTransaction(preparedTx)
+  if (sendResult.status === 'ERROR') {
+    throw new Error(`Deploy sendTransaction failed: ${JSON.stringify(sendResult.errorResult)}`)
+  }
+
+  // Poll for confirmation
+  let getResult = await sorobanRpc.getTransaction(sendResult.hash)
+  let attempts = 0
+  while (getResult.status === 'NOT_FOUND' && attempts < 30) {
+    await sleep(1000)
+    getResult = await sorobanRpc.getTransaction(sendResult.hash)
+    attempts++
+  }
+
+  if (getResult.status !== 'SUCCESS') {
+    throw new Error(`Deploy tx failed: ${getResult.status}`)
+  }
+
+  // Extract new contract address from return value
+  const successResult = getResult as { returnValue?: xdr.ScVal; status: string }
+  if (!successResult.returnValue) {
+    throw new Error('Deploy tx succeeded but no return value')
+  }
+
+  const newAddress = Address.fromScVal(successResult.returnValue)
+  const newContractId = newAddress.toString()
+  console.log(`[Pulsar] Deployed fresh contract: ${newContractId}`)
+  return newContractId
 }
 
 /**

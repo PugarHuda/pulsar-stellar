@@ -147,8 +147,18 @@ async function callOpenRouter(prompt: string, apiKey: string): Promise<string> {
       return generateMockLlmResponse(prompt)
     }
 
-    console.log(`[Pulsar] OpenRouter response via ${model} (${text.length} chars)`)
-    return text
+    // Sanitize: remove non-ASCII characters that can cause encoding issues
+    const sanitized = text.replace(/[^\x00-\x7F]/g, (c) => {
+      // Replace common Unicode punctuation with ASCII equivalents
+      const map: Record<string, string> = {
+        '\u2014': '--', '\u2013': '-', '\u2018': "'", '\u2019': "'",
+        '\u201C': '"', '\u201D': '"', '\u2026': '...', '\u00B7': '*',
+      }
+      return map[c] ?? ' '
+    })
+
+    console.log(`[Pulsar] OpenRouter response via ${model} (${sanitized.length} chars)`)
+    return sanitized
   } catch (err) {
     console.warn(`[Pulsar] OpenRouter call failed: ${err instanceof Error ? err.message : String(err)}`)
     return generateMockLlmResponse(prompt)

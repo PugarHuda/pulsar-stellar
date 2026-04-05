@@ -146,13 +146,20 @@ export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> 
     completedSteps++
 
     // Emit SSE step event for real-time UI update
+    const safeDescription = description.replace(/[^\x00-\x7F]/g, (c) => {
+      const map: Record<string, string> = {
+        '\u2014': '--', '\u2013': '-', '\u2018': "'", '\u2019': "'",
+        '\u201C': '"', '\u201D': '"', '\u2026': '...', '\u00B7': '*',
+      }
+      return map[c] ?? ' '
+    })
     const stepEvent: StepSseEvent = {
       type: 'step',
       channelId,
       step: {
         ...step,
         index: completedSteps - 1,
-        description,
+        description: safeDescription,
         cumulativeCostUsdc,
       },
       commitment: {

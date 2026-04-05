@@ -58,31 +58,44 @@ export function ChannelPanel({ onChannelOpened, aiMode }: ChannelPanelProps) {
     setBalanceStatus('checking')
 
     try {
-      const res = await fetch('/api/channels', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          budgetUsdc: parseFloat(budgetUsdc),
-          userPublicKey,
-        }),
-      })
-
-      const data = await res.json()
-
-      if (!res.ok) {
-        setBalanceStatus('error')
-        throw new Error(data.error ?? 'Failed to open channel')
-      }
-
+      const result = await tryOpenChannel()
       setBalanceStatus('ok')
-      setChannel(data)
-      onChannelOpened(data.channelId, data.budgetUsdc)
+      setChannel(result)
+      onChannelOpened(result.channelId, result.budgetUsdc)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
       if (balanceStatus === 'checking') setBalanceStatus('error')
     } finally {
       setLoading(false)
     }
+  }
+
+  async function tryOpenChannel(retried = false): Promise<ChannelInfo> {
+    const res = await fetch('/api/channels', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        budgetUsdc: parseFloat(budgetUsdc),
+        userPublicKey,
+      }),
+    })
+
+    const data = await res.json()
+
+    if (!res.ok) {
+      const errMsg: string = data.error ?? 'Failed to open channel'
+      // Auto-retry once: deploy a fresh contract if "channel already open"
+      if (!retried && errMsg.toLowerCase().includes('channel already open')) {
+        const resetRes = await fetch('/api/admin/reset-contract', { method: 'POST' })
+        if (resetRes.ok) {
+          return tryOpenChannel(true)
+        }
+      }
+      setBalanceStatus('error')
+      throw new Error(errMsg)
+    }
+
+    return data as ChannelInfo
   }
 
   async function handleCopyChannelId() {

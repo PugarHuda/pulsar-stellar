@@ -17,6 +17,19 @@ Task done → server closes channel → 1 on-chain settlement tx
 User receives refund of unused budget
 ```
 
+## Real vs Demo Mode
+
+| Mode | Trigger | Behavior |
+|------|---------|----------|
+| **Demo** (default) | `DEMO_MODE=true` or `CONTRACT_ID` not set | Mock contract address, mock tx hash, no real USDC needed |
+| **Production** | `CONTRACT_ID=<deployed-contract>` and `DEMO_MODE=false` | Real Soroban `open_channel` / `close_channel` invocations on Stellar Testnet |
+
+### Key env vars
+- `DEMO_MODE=true` — skip real USDC balance check and Soroban calls (default)
+- `CONTRACT_ID` — deployed Soroban contract address; if set, enables real on-chain calls
+- `SERVER_SECRET_KEY` — server keypair (signs commitments + submits settlement tx)
+- `USER_SECRET_KEY` — demo user keypair
+
 ## Stack
 - **Backend**: Node.js 20+, TypeScript, Express, `@stellar/mpp`, `@stellar/stellar-sdk`
 - **Frontend**: React 18, Vite, Tailwind CSS

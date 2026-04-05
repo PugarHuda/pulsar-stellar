@@ -17,3 +17,8 @@ Step count: 5-8 berdasarkan simpleHash(taskDescription) % 4.
 
 ## Budget exhaustion
 Jika newAmount > budgetBaseUnits → stop, emit 'budget_exhausted' SSE, return completedNormally: false
+
+## Notes
+- Agent runner tidak melakukan on-chain tx — hanya signCommitment (off-chain)
+- Tidak terpengaruh oleh DEMO_MODE atau CONTRACT_ID — selalu mock steps
+- _sleepFn parameter memungkinkan test untuk skip artificial delays

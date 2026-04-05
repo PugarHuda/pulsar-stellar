@@ -18,41 +18,53 @@ Pulsar (session mode):       100 steps = 100 off-chain commitments + 1 settlemen
 
 This makes Pulsar ideal for AI agent billing where tasks involve dozens of LLM calls and tool calls.
 
+## Demo Mode vs Production Mode
+
+| Feature | Demo Mode (default) | Production Mode |
+|---------|--------------------|--------------------|
+| Trigger | `DEMO_MODE=true` or `CONTRACT_ID` not set | `CONTRACT_ID=<address>` set |
+| Open Channel | Mock contract address (deterministic) | Real Soroban `open_channel()` call |
+| Settlement | Mock tx hash | Real Soroban `close_channel()` call |
+| USDC balance check | Skipped | Real Horizon balance check |
+| Testnet USDC needed | No | Yes |
+| Tests | All 106 pass | Same (tests always use demo mode) |
+
+**Demo mode is the default** — the app works fully without a deployed contract or real USDC.
+
 ## Architecture
 
 ```
 User/UI              Pulsar Backend           Stellar Testnet
    |                      |                        |
    | Open Channel         |                        |
-   |--------------------->| deploy Soroban         |
-   |                      | one-way-channel ------>|
+   |--------------------->| [DEMO] mock address    |
+   |                      | [PROD] open_channel ──>| Soroban contract
    | { channelId }        |                        |
    |<---------------------|                        |
    |                      |                        |
    | Run Agent Task       |                        |
    |--------------------->|                        |
-   |                      | [step 1] sign commitment (off-chain)
+   |                      | [step 1] sign commitment (off-chain, both modes)
    | SSE: step 1 ←- - - - |                        |
-   |                      | [step 2] sign commitment (off-chain)
+   |                      | [step 2] sign commitment (off-chain, both modes)
    | SSE: step 2 ←- - - - |                        |
    |                      | ... (N steps, 0 on-chain tx)
    |                      |                        |
    | Settle Channel       |                        |
-   |--------------------->| close channel -------->|
+   |--------------------->| [DEMO] mock tx hash    |
+   |                      | [PROD] close_channel ─>| Soroban contract
    | { txHash, refund }   | 1 on-chain tx          |
    |<---------------------|                        |
 ```
 
-## Quick Start
+## Quick Start (Demo Mode)
 
 ### Prerequisites
 - Node.js 20+
-- Stellar testnet accounts funded with XLM + USDC
 
 ### 1. Setup
 
 ```bash
-# Clone and install
 git clone <repo>
 cd pulsar
 
@@ -60,34 +72,23 @@ cd pulsar
 cd backend
 npm install
 cp .env.example .env
-# Edit .env with your keypairs
+# Edit .env: add SERVER_SECRET_KEY and USER_SECRET_KEY (any valid Stellar keypairs)
 
 # Frontend
 cd ../frontend
 npm install
 ```
 
-### 2. Fund testnet accounts
+### 2. Generate keypairs (optional — for demo)
 
 ```bash
 cd backend
 npm run demo-setup
 ```
 
-This will:
-- Fund server and user accounts via Friendbot (10,000 XLM each)
-- Print your public keys for the Circle USDC faucet
+This generates keypairs and funds them via Friendbot (testnet XLM).
 
-Then get testnet USDC from: https://faucet.circle.com (select Stellar Testnet)
-
-### 3. Configure `.env`
-
-```env
-SERVER_SECRET_KEY=S...   # Server keypair (signs commitments)
-USER_SECRET_KEY=S...     # Demo user keypair (funds channels)
-```
-
-### 4. Run
+### 3. Run
 
 ```bash
 # Terminal 1 — Backend
@@ -100,6 +101,56 @@ npm run dev
 ```
 
 Open http://localhost:5173
+
+## Running with Real Stellar Testnet
+
+To use real Soroban contract calls (production mode):
+
+### Step 1: Fund testnet accounts
+
+```bash
+cd backend
+npm run demo-setup
+```
+
+Copy the generated `SERVER_SECRET_KEY` and `USER_SECRET_KEY` into `backend/.env`.
+
+### Step 2: Get testnet USDC
+
+Visit [https://faucet.circle.com](https://faucet.circle.com):
+- Select: **Stellar Testnet**
+- Paste your **user public key** (printed by demo-setup)
+- Request USDC (you'll receive testnet USDC)
+
+You also need a USDC trustline on the user account. Use `setupUsdcTrustline()` from `stellar/config.ts` or the Stellar Laboratory.
+
+### Step 3: Deploy the Soroban contract
+
+```bash
+cd backend
+npm run deploy-contract
+```
+
+This compiles and deploys `pulsar/contract/src/lib.rs` to Stellar Testnet and prints the contract address.
+
+### Step 4: Configure `.env`
+
+```env
+# Add to backend/.env
+CONTRACT_ID=C...          # deployed contract address from step 3
+DEMO_MODE=false           # enable real Soroban calls
+SERVER_SECRET_KEY=S...    # server keypair
+USER_SECRET_KEY=S...      # user keypair (must have USDC)
+```
+
+### Step 5: Run
+
+```bash
+cd backend && npm run dev
+cd frontend && npm run dev
+```
+
+Now `open_channel` and `close_channel` will invoke the real Soroban contract on Stellar Testnet.
 
 ## Demo Walkthrough
 
@@ -127,6 +178,18 @@ Open http://localhost:5173
 | Data Fetch | 0.02 USDC | Tool: external API |
 | Reasoning | 0.01 USDC | Internal reasoning step |
 
+## What's Real vs Simulated
+
+| Component | Demo Mode | Production Mode |
+|-----------|-----------|-----------------|
+| Off-chain commitment signing | ✅ Real Ed25519 signatures | ✅ Real Ed25519 signatures |
+| Signature verification | ✅ Real crypto | ✅ Real crypto |
+| USDC balance check | 🔵 Skipped | ✅ Real Horizon query |
+| Contract deployment | 🔵 Mock address | ✅ Real Soroban `open_channel` |
+| Settlement tx | 🔵 Mock hash | ✅ Real Soroban `close_channel` |
+| USDC transfer | 🔵 Simulated | ✅ Real on-chain transfer |
+| Stellar Explorer link | 🔵 Mock hash URL | ✅ Real tx URL |
+
 ## Correctness Properties
 
 Pulsar enforces 10 formal correctness properties validated via property-based testing (fast-check):
@@ -151,7 +214,7 @@ npm test
 
 - **Backend**: Node.js 20, TypeScript, Express
 - **Stellar**: `@stellar/stellar-sdk` v14, `@stellar/mpp` (MPP Session)
-- **Contract**: Soroban one-way-channel contract
+- **Contract**: Soroban one-way-channel contract (Rust)
 - **Frontend**: React 18, Vite, Tailwind CSS
 - **Testing**: Vitest + fast-check (property-based testing)
 - **Network**: Stellar Testnet

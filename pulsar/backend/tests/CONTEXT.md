@@ -2,6 +2,10 @@
 
 ## Files
 - `channel.test.ts` — integration tests: openChannel, signCommitment, settleChannel, full flow
+- `open-channel.test.ts` — unit tests for openChannel (balance check, contract failure)
+- `settlement-retry.test.ts` — settlement retry logic (Req 4.3)
+- `store.test.ts` — channel store CRUD operations
+- `stellar-config.test.ts` — Stellar config constants and helpers
 - `properties.test.ts` — property-based tests (fast-check): 10 correctness properties
 
 ## Run tests
@@ -22,7 +26,14 @@ P8: Signature verifiability — sig verifiable dengan server pubkey
 P9: Deterministic steps — same task → same steps
 P10: Budget halt — agent stops before exceeding budget
 
-## Mocking
-- getUsdcBalance mocked → returns '100.0000000'
-- getServerKeypair/getUserKeypair mocked → fixed test keypairs
-- Soroban RPC tidak di-hit (demo mode di manager.ts)
+## Mocking strategy
+All tests use **DEMO_MODE** behavior (no real testnet connection required):
+- `getUsdcBalance` mocked → returns '100.0000000'
+- `getServerKeypair`/`getUserKeypair` mocked → fixed test keypairs
+- Soroban RPC tidak di-hit (CONTRACT_ID not set → demo mode in manager.ts)
+- SSE broadcast mocked → vi.fn()
+
+## Important: tests are not affected by real Soroban integration
+The real Soroban calls in manager.ts are gated behind `CONTRACT_ID` env var.
+Since tests do not set `CONTRACT_ID`, they always use demo mode mock behavior.
+All 106 tests pass without any real testnet connection.

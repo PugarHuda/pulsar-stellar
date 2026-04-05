@@ -18,13 +18,18 @@ backend/
 │   │   ├── sse.ts        # SSE manager (addClient, broadcast)
 │   │   └── routes.ts     # Express routes (4 REST + 1 SSE)
 │   ├── stellar/
-│   │   └── config.ts     # Stellar SDK config, keypairs, USDC SAC
+│   │   └── config.ts     # Stellar SDK config, keypairs, USDC SAC, setupUsdcTrustline
 │   └── index.ts          # Express app entry point
 ├── tests/
-│   ├── channel.test.ts   # Integration tests
-│   └── properties.test.ts # Property-based tests (fast-check)
+│   ├── channel.test.ts         # Integration tests
+│   ├── properties.test.ts      # Property-based tests (fast-check)
+│   ├── open-channel.test.ts    # openChannel unit tests
+│   ├── settlement-retry.test.ts # Settlement retry logic tests
+│   ├── store.test.ts           # Channel store CRUD tests
+│   └── stellar-config.test.ts  # Stellar config unit tests
 ├── scripts/
-│   └── demo-setup.ts     # Fund accounts + deploy contract
+│   ├── demo-setup.ts     # Fund accounts + print .env instructions
+│   └── deploy-contract.ts # Deploy Soroban contract to testnet
 ├── .env.example
 ├── package.json
 ├── tsconfig.json
@@ -39,6 +44,25 @@ backend/
 | POST | `/api/channels/:id/run` | Run agent task (SSE stream) |
 | POST | `/api/channels/:id/settle` | Close channel + settle on-chain |
 | GET | `/api/events` | SSE event stream |
+
+## Real vs Demo Mode
+
+| Mode | Trigger | Behavior |
+|------|---------|----------|
+| **Demo** (default) | `DEMO_MODE=true` or `CONTRACT_ID` not set | Mock contract address, mock tx hash, no real USDC needed |
+| **Production** | `CONTRACT_ID=<deployed-contract>` and `DEMO_MODE=false` | Real Soroban `open_channel` / `close_channel` on Stellar Testnet |
+
+### DEMO_MODE=true (default)
+- `deployChannelContract()` → returns deterministic mock `C...` address
+- `submitSettlementTx()` → returns mock tx hash (hex string)
+- `getUsdcBalance()` check is skipped
+- All 106 tests pass without any real testnet connection
+
+### CONTRACT_ID set (production)
+- `deployChannelContract()` → invokes `open_channel(sender, recipient, token, amount, expiry)` on Soroban
+- `submitSettlementTx()` → invokes `close_channel(commitment_amount, signature)` on Soroban
+- Uses `sorobanRpc.simulateTransaction()` + `prepareTransaction()` + `sendTransaction()` + polling
+- Server keypair signs and submits the transaction
 
 ## Key concepts
 - **Channel**: one-way payment channel di Soroban, escrow USDC dari user
@@ -61,3 +85,4 @@ backend/
 ## Environment variables
 Lihat `.env.example` untuk daftar lengkap.
 Wajib diset sebelum run: `SERVER_SECRET_KEY`, `USER_SECRET_KEY`, `USDC_SAC_ADDRESS`
+Optional untuk production: `CONTRACT_ID` (enables real Soroban calls)

@@ -10,16 +10,32 @@
  * MPP Session flow:
  *   open → [sign commitment × N steps] → settle
  *
+ * Real vs Demo mode:
+ *   - CONTRACT_ID set → real Soroban contract invocations on Stellar Testnet
+ *   - CONTRACT_ID not set (or DEMO_MODE=true) → mock behavior, no real network calls
+ *
  * Context: See backend/CONTEXT.md
  */
 
-import { Keypair } from '@stellar/stellar-sdk'
+import {
+  Keypair,
+  Contract,
+  TransactionBuilder,
+  Networks,
+  BASE_FEE,
+  xdr,
+  nativeToScVal,
+  Address,
+} from '@stellar/stellar-sdk'
 import { v4 as uuidv4 } from 'uuid'
 import {
   getServerKeypair,
   getUsdcBalance,
   usdcToBaseUnits,
   baseUnitsToUsdc,
+  sorobanRpc,
+  NETWORK_PASSPHRASE,
+  USDC_SAC_ADDRESS,
 } from '../stellar/config.js'
 import { saveChannel, getChannel, updateChannel } from './store.js'
 import {
@@ -315,8 +331,8 @@ export async function settleChannel(
 /**
  * Deploy the one-way-channel Soroban contract.
  *
- * Demo mode: returns a deterministic mock contract address.
- * Production: would invoke stellar CLI or SDK to deploy the WASM.
+ * If CONTRACT_ID env var is set → invoke real Soroban open_channel function.
+ * Otherwise (demo mode) → return a deterministic mock contract address.
  */
 async function deployChannelContract(params: {
   channelId: string
@@ -324,14 +340,80 @@ async function deployChannelContract(params: {
   serverPublicKey: string
   budgetBaseUnits: bigint
 }): Promise<string> {
-  // In demo mode, generate a deterministic C... address from channelId
-  // This simulates a deployed Soroban contract address
+  const contractId = process.env.CONTRACT_ID
+  const demoMode = process.env.DEMO_MODE === 'true' || !contractId
+
+  if (!demoMode && contractId) {
+    // ── Real Soroban invocation ──────────────────────────────────────────────
+    try {
+      const serverKeypair = getServerKeypair()
+      const contract = new Contract(contractId)
+
+      // Load server account for sequence number
+      const account = await sorobanRpc.getAccount(serverKeypair.publicKey())
+
+      // Expiry: 1 hour from now (Unix seconds)
+      const expiry = Math.floor(Date.now() / 1000) + 3600
+
+      const tx = new TransactionBuilder(account, {
+        fee: BASE_FEE,
+        networkPassphrase: NETWORK_PASSPHRASE,
+      })
+        .addOperation(
+          contract.call(
+            'open_channel',
+            nativeToScVal(params.userPublicKey, { type: 'address' }),
+            nativeToScVal(serverKeypair.publicKey(), { type: 'address' }),
+            nativeToScVal(USDC_SAC_ADDRESS, { type: 'address' }),
+            nativeToScVal(params.budgetBaseUnits, { type: 'i128' }),
+            xdr.ScVal.scvU64(xdr.Uint64.fromString(String(expiry))),
+          ),
+        )
+        .setTimeout(30)
+        .build()
+
+      // Simulate first to get the prepared transaction
+      const simResult = await sorobanRpc.simulateTransaction(tx)
+      if ('error' in simResult) {
+        throw new Error(`Soroban simulation failed: ${simResult.error}`)
+      }
+
+      const preparedTx = await sorobanRpc.prepareTransaction(tx)
+      preparedTx.sign(serverKeypair)
+
+      const sendResult = await sorobanRpc.sendTransaction(preparedTx)
+      if (sendResult.status === 'ERROR') {
+        throw new Error(`Soroban sendTransaction failed: ${JSON.stringify(sendResult.errorResult)}`)
+      }
+
+      // Poll for confirmation
+      const txHash = sendResult.hash
+      let getResult = await sorobanRpc.getTransaction(txHash)
+      let attempts = 0
+      while (getResult.status === 'NOT_FOUND' && attempts < 20) {
+        await sleep(1000)
+        getResult = await sorobanRpc.getTransaction(txHash)
+        attempts++
+      }
+
+      if (getResult.status !== 'SUCCESS') {
+        throw new Error(`open_channel transaction failed: ${getResult.status}`)
+      }
+
+      // Return the contract address as the channel contract
+      return contractId
+    } catch (err) {
+      throw new Error(
+        `Failed to invoke open_channel on Soroban contract: ${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+  }
+
+  // ── Demo mode: deterministic mock contract address ───────────────────────
   const hash = Buffer.from(params.channelId.replace(/-/g, ''), 'hex')
   const padded = Buffer.alloc(32)
   hash.copy(padded, 0, 0, Math.min(hash.length, 32))
 
-  // Encode as Stellar contract address (C...)
-  // Using a simplified mock — in production use actual contract deployment
   const mockContractId = `C${Buffer.from(padded).toString('base64url').toUpperCase().slice(0, 55)}`
   return mockContractId
 }
@@ -339,16 +421,79 @@ async function deployChannelContract(params: {
 /**
  * Submit the settlement transaction to Stellar Testnet.
  *
- * Demo mode: simulates a successful settlement and returns a mock tx hash.
- * Production: would invoke the close() function on the one-way-channel contract.
+ * If CONTRACT_ID env var is set → invoke real Soroban close_channel function.
+ * Otherwise (demo mode) → return a mock tx hash.
  */
 async function submitSettlementTx(params: {
   channel: Channel
   finalAmount: bigint
   finalSig: Uint8Array | null
 }): Promise<string> {
-  // In demo mode, simulate settlement with a mock tx hash
-  // Production: call close() on the Soroban one-way-channel contract
+  const contractId = process.env.CONTRACT_ID
+  const demoMode = process.env.DEMO_MODE === 'true' || !contractId
+
+  if (!demoMode && contractId) {
+    // ── Real Soroban close_channel invocation ────────────────────────────────
+    try {
+      const serverKeypair = getServerKeypair()
+      const contract = new Contract(contractId)
+
+      const account = await sorobanRpc.getAccount(serverKeypair.publicKey())
+
+      // Build signature ScVal (BytesN<64>)
+      const sigBytes = params.finalSig ?? new Uint8Array(64)
+      const sigScVal = xdr.ScVal.scvBytes(Buffer.from(sigBytes))
+
+      const tx = new TransactionBuilder(account, {
+        fee: BASE_FEE,
+        networkPassphrase: NETWORK_PASSPHRASE,
+      })
+        .addOperation(
+          contract.call(
+            'close_channel',
+            nativeToScVal(params.finalAmount, { type: 'i128' }),
+            sigScVal,
+          ),
+        )
+        .setTimeout(30)
+        .build()
+
+      const simResult = await sorobanRpc.simulateTransaction(tx)
+      if ('error' in simResult) {
+        throw new Error(`Soroban simulation failed: ${simResult.error}`)
+      }
+
+      const preparedTx = await sorobanRpc.prepareTransaction(tx)
+      preparedTx.sign(serverKeypair)
+
+      const sendResult = await sorobanRpc.sendTransaction(preparedTx)
+      if (sendResult.status === 'ERROR') {
+        throw new Error(`Soroban sendTransaction failed: ${JSON.stringify(sendResult.errorResult)}`)
+      }
+
+      // Poll for confirmation
+      const txHash = sendResult.hash
+      let getResult = await sorobanRpc.getTransaction(txHash)
+      let attempts = 0
+      while (getResult.status === 'NOT_FOUND' && attempts < 20) {
+        await sleep(1000)
+        getResult = await sorobanRpc.getTransaction(txHash)
+        attempts++
+      }
+
+      if (getResult.status !== 'SUCCESS') {
+        throw new Error(`close_channel transaction failed: ${getResult.status}`)
+      }
+
+      return txHash
+    } catch (err) {
+      throw new Error(
+        `Failed to invoke close_channel on Soroban contract: ${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+  }
+
+  // ── Demo mode: mock tx hash ───────────────────────────────────────────────
   const mockTxHash = Buffer.from(
     `pulsar-settlement-${params.channel.id}-${Date.now()}`,
   )

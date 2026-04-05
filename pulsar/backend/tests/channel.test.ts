@@ -35,6 +35,8 @@ process.env.HORIZON_URL = 'https://horizon-testnet.stellar.org'
 process.env.NETWORK_PASSPHRASE = 'Test SDF Network ; September 2015'
 process.env.USDC_ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5'
 process.env.USDC_SAC_ADDRESS = 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA'
+// Disable demo mode so balance checks run (tests mock getUsdcBalance directly)
+process.env.DEMO_MODE = 'false'
 
 // Mock getUsdcBalance to return sufficient balance
 vi.mock('../src/stellar/config.js', async (importOriginal) => {

@@ -121,3 +121,47 @@ export function usdcToBaseUnits(amount: number): bigint {
 export function baseUnitsToUsdc(amount: bigint): number {
   return Number(amount) / 10_000_000
 }
+
+/**
+ * Set up a USDC trustline for an account if it doesn't already have one.
+ * Uses Horizon + TransactionBuilder (classic Stellar operation).
+ *
+ * This is required before an account can hold USDC on Stellar.
+ * In production, call this once per user account before opening a channel.
+ */
+export async function setupUsdcTrustline(keypair: Keypair): Promise<void> {
+  const { TransactionBuilder, Operation, Networks, BASE_FEE } = await import('@stellar/stellar-sdk')
+
+  // Load account to check existing trustlines
+  const account = await horizonServer.loadAccount(keypair.publicKey())
+
+  // Check if USDC trustline already exists
+  const hasTrustline = account.balances.some(
+    (b) =>
+      b.asset_type !== 'native' &&
+      'asset_code' in b &&
+      b.asset_code === USDC_ASSET_CODE &&
+      b.asset_issuer === USDC_ISSUER,
+  )
+
+  if (hasTrustline) {
+    return // Already has trustline, nothing to do
+  }
+
+  // Build a ChangeTrust transaction to add the USDC trustline
+  const tx = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: NETWORK_PASSPHRASE,
+  })
+    .addOperation(
+      Operation.changeTrust({
+        asset: USDC_ASSET,
+      }),
+    )
+    .setTimeout(30)
+    .build()
+
+  tx.sign(keypair)
+
+  await horizonServer.submitTransaction(tx)
+}

@@ -1,0 +1,39 @@
+{
+  "name": "pulsar-backend",
+  "version": "1.0.0",
+  "description": "Pulsar — AI Agent Billing via MPP Session on Stellar (Backend)",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "vitest --run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest --run --coverage",
+    "typecheck": "tsc --noEmit",
+    "demo-setup": "tsx scripts/demo-setup.ts",
+    "deploy-contract": "tsx scripts/deploy-contract.ts"
+  },
+  "dependencies": {
+    "@stellar/mpp": "^0.4.0",
+    "@stellar/stellar-sdk": "^14.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^5.0.0",
+    "mppx": "^0.4.11",
+    "uuid": "^10.0.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "@types/uuid": "^10.0.0",
+    "@vitest/coverage-v8": "^2.0.0",
+    "fast-check": "^3.21.0",
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  }
+}

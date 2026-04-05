@@ -27,6 +27,7 @@ import {
   nativeToScVal,
   Address,
 } from '@stellar/stellar-sdk'
+import { execSync } from 'child_process'
 import { v4 as uuidv4 } from 'uuid'
 import {
   getServerKeypair,
@@ -333,10 +334,10 @@ export async function settleChannel(
  * Deploy a new one-way-channel Soroban contract instance and invoke open_channel.
  *
  * Architecture: Each payment channel = one Soroban contract instance.
- * CONTRACT_WASM_HASH env var = the uploaded WASM hash (from `stellar contract deploy --wasm`)
- * We deploy a new instance per channel, then call open_channel on it.
+ * CONTRACT_WASM_PATH env var = path to compiled WASM file (auto-deploys fresh contract)
+ * CONTRACT_ID env var = fallback single contract address
  *
- * Falls back to mock if CONTRACT_WASM_HASH is not set.
+ * Falls back to mock if neither is set.
  */
 async function deployChannelContract(params: {
   channelId: string
@@ -344,10 +345,35 @@ async function deployChannelContract(params: {
   serverPublicKey: string
   budgetBaseUnits: bigint
 }): Promise<string> {
+  const wasmPath = process.env.CONTRACT_WASM_PATH
   const contractId = process.env.CONTRACT_ID
 
+  if (wasmPath) {
+    // Deploy a fresh contract instance via Stellar CLI
+    try {
+      const stellarCli = findStellarCli()
+      if (!stellarCli) {
+        throw new Error('Stellar CLI not found. Install from https://developers.stellar.org/docs/tools/cli')
+      }
+      const serverSecret = process.env.SERVER_SECRET_KEY!
+      const cmd = `"${stellarCli}" contract deploy --wasm "${wasmPath}" --source ${serverSecret} --network testnet`
+      const output = execSync(cmd, { encoding: 'utf8', timeout: 60000 }).trim()
+      const newContractId = output.split('\n').find(line => line.trim().startsWith('C'))?.trim()
+      if (!newContractId) {
+        throw new Error(`Could not parse contract ID from stellar CLI output: ${output}`)
+      }
+      console.log(`[Pulsar] Deployed fresh contract: ${newContractId}`)
+      return await invokeOpenChannel(newContractId, params)
+    } catch (err) {
+      console.warn(`[Pulsar] WASM deploy failed, falling back to CONTRACT_ID: ${err instanceof Error ? err.message : String(err)}`)
+      if (contractId) {
+        return await invokeOpenChannel(contractId, params)
+      }
+      throw err
+    }
+  }
+
   if (contractId) {
-    // CONTRACT_ID is a deployed contract address — invoke open_channel on it
     return await invokeOpenChannel(contractId, params)
   }
 
@@ -357,6 +383,28 @@ async function deployChannelContract(params: {
   hash.copy(padded, 0, 0, Math.min(hash.length, 32))
   const mockContractId = `C${Buffer.from(padded).toString('base64url').toUpperCase().slice(0, 55)}`
   return mockContractId
+}
+
+/**
+ * Find the Stellar CLI executable path.
+ */
+function findStellarCli(): string | null {
+  const candidates = [
+    'C:\\Program Files (x86)\\Stellar CLI\\stellar.exe',
+    'C:\\Program Files\\Stellar CLI\\stellar.exe',
+    'stellar',
+    process.env.STELLAR_CLI_PATH,
+  ].filter(Boolean) as string[]
+
+  for (const candidate of candidates) {
+    try {
+      execSync(`"${candidate}" --version`, { encoding: 'utf8', timeout: 5000, stdio: 'pipe' })
+      return candidate
+    } catch {
+      // not found, try next
+    }
+  }
+  return null
 }
 
 /**

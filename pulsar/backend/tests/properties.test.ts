@@ -66,6 +66,7 @@ process.env.USDC_ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLF
 process.env.USDC_SAC_ADDRESS = 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA'
 // Unset CONTRACT_ID so tests use mock contract (no real Soroban calls)
 delete process.env.CONTRACT_ID
+delete process.env.CONTRACT_WASM_PATH
 
 /** Create a test channel in the store */
 function createTestChannel(budgetUsdc: number): Channel {

@@ -103,13 +103,17 @@ export async function openChannel(
   }
 
   // Check USDC balance before submitting any on-chain tx (Req 1.3)
-  const balanceStr = await getUsdcBalance(userPublicKey)
-  const balance = parseFloat(balanceStr)
-  if (balance < budgetUsdc) {
-    throw new PulsarError(
-      PulsarErrorCode.INSUFFICIENT_USDC_BALANCE,
-      `Insufficient USDC balance: have ${balance} USDC, need ${budgetUsdc} USDC`,
-    )
+  // In DEMO_MODE=true, skip balance check so the app runs without real USDC
+  const demoMode = process.env.DEMO_MODE === 'true'
+  if (!demoMode) {
+    const balanceStr = await getUsdcBalance(userPublicKey)
+    const balance = parseFloat(balanceStr)
+    if (balance < budgetUsdc) {
+      throw new PulsarError(
+        PulsarErrorCode.INSUFFICIENT_USDC_BALANCE,
+        `Insufficient USDC balance: have ${balance} USDC, need ${budgetUsdc} USDC`,
+      )
+    }
   }
 
   const serverKeypair = getServerKeypair()

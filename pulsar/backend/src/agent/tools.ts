@@ -11,7 +11,9 @@
  */
 
 import { VM } from 'vm2'
-import fetch from 'node-fetch'
+
+// Use global fetch (available in Node 18+)
+const fetch = globalThis.fetch
 
 // ─── Web Search (DuckDuckGo) ──────────────────────────────────────────────────
 
@@ -27,10 +29,15 @@ export async function executeWebSearch(query: string): Promise<string> {
     const encodedQuery = encodeURIComponent(query)
     const url = `https://api.duckduckgo.com/?q=${encodedQuery}&format=json&no_html=1&skip_disambig=1`
 
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 5000)
+
     const response = await fetch(url, {
       headers: { 'User-Agent': 'Pulsar-Agent/1.0' },
-      timeout: 5000,
+      signal: controller.signal,
     })
+
+    clearTimeout(timeoutId)
 
     if (!response.ok) {
       throw new Error(`DuckDuckGo API returned ${response.status}`)
@@ -147,9 +154,14 @@ export async function executeDataFetch(taskDescription: string): Promise<string>
 
 async function fetchWeatherData(): Promise<string> {
   // Using wttr.in - free weather API, no key needed
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 5000)
+  
   const response = await fetch('https://wttr.in/Jakarta?format=j1', {
-    timeout: 5000,
+    signal: controller.signal,
   })
+  
+  clearTimeout(timeoutId)
   const data = await response.json() as {
     current_condition?: Array<{ temp_C?: string; weatherDesc?: Array<{ value?: string }> }>
   }
@@ -160,10 +172,15 @@ async function fetchWeatherData(): Promise<string> {
 
 async function fetchCryptoData(): Promise<string> {
   // Using CoinGecko free API (no key needed for basic calls)
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 5000)
+  
   const response = await fetch(
     'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd',
-    { timeout: 5000 },
+    { signal: controller.signal },
   )
+  
+  clearTimeout(timeoutId)
   const data = await response.json() as {
     bitcoin?: { usd?: number }
     ethereum?: { usd?: number }
@@ -175,9 +192,14 @@ async function fetchCryptoData(): Promise<string> {
 
 async function fetchRandomFact(): Promise<string> {
   // Using uselessfacts.jsph.pl - free random facts API
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 5000)
+  
   const response = await fetch('https://uselessfacts.jsph.pl/random.json?language=en', {
-    timeout: 5000,
+    signal: controller.signal,
   })
+  
+  clearTimeout(timeoutId)
   const data = await response.json() as { text?: string }
   const fact = data.text || 'No fact available'
   return `Random fact fetched: "${fact.slice(0, 80)}${fact.length > 80 ? '...' : ''}" — received 512 bytes`
@@ -185,9 +207,14 @@ async function fetchRandomFact(): Promise<string> {
 
 async function fetchGenericData(): Promise<string> {
   // Using JSONPlaceholder - free fake REST API
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 5000)
+  
   const response = await fetch('https://jsonplaceholder.typicode.com/posts/1', {
-    timeout: 5000,
+    signal: controller.signal,
   })
+  
+  clearTimeout(timeoutId)
   const data = await response.json() as { id?: number; title?: string }
   return `Data fetched from external API: record #${data.id || 0} — received 847 bytes, parsed 23 records`
 }

@@ -17,10 +17,11 @@ import { Router, type Request, type Response } from 'express'
 import { z } from 'zod'
 import { Keypair } from '@stellar/stellar-sdk'
 import { openChannel, settleChannel, deployFreshContract, getGlobalContractId } from '../channel/manager.js'
-import { getChannel } from '../channel/store.js'
+import { getChannel, listChannels } from '../channel/store.js'
 import { runAgent } from '../agent/runner.js'
 import { addClient } from './sse.js'
 import { PulsarError, PulsarErrorCode } from '../channel/types.js'
+import { formatErrorResponse } from '../channel/error-messages.js'
 import { baseUnitsToUsdc } from '../stellar/config.js'
 
 export const router = Router()
@@ -49,6 +50,52 @@ const RunTaskSchema = z.object({
  */
 router.get('/events', (req: Request, res: Response) => {
   addClient(res)
+})
+
+/**
+ * GET /api/analytics
+ * 
+ * Returns analytics about all channels (for demo/hackathon showcase).
+ */
+router.get('/analytics', (req, res) => {
+  const allChannels = listChannels()
+  
+  const totalChannels = allChannels.length
+  const closedChannels = allChannels.filter((c) => c.status === 'closed')
+  
+  const totalUsdcProcessed = closedChannels.reduce((sum: number, c) => {
+    return sum + baseUnitsToUsdc(c.currentCommitmentAmount)
+  }, 0)
+  
+  const avgTaskCost = closedChannels.length > 0 
+    ? totalUsdcProcessed / closedChannels.length 
+    : 0
+  
+  const totalSteps = closedChannels.reduce((sum: number, c) => {
+    return sum + (c.lastStepIndex + 1)
+  }, 0)
+  
+  // Calculate cost savings vs traditional (100 tx per 100 steps)
+  const traditionalTxCount = totalSteps
+  const pulsarTxCount = closedChannels.length
+  const txReduction = traditionalTxCount > 0 
+    ? ((traditionalTxCount - pulsarTxCount) / traditionalTxCount * 100).toFixed(1)
+    : 0
+  
+  res.json({
+    totalChannels,
+    openChannels: allChannels.filter((c) => c.status === 'open' || c.status === 'running').length,
+    closedChannels: closedChannels.length,
+    totalUsdcProcessed: Number(totalUsdcProcessed.toFixed(6)),
+    avgTaskCost: Number(avgTaskCost.toFixed(6)),
+    totalSteps,
+    costSavings: {
+      traditionalTxCount,
+      pulsarTxCount,
+      txReduction: `${txReduction}%`,
+      message: `${txReduction}% fewer transactions vs traditional pay-per-request`
+    }
+  })
 })
 
 /**
@@ -221,16 +268,20 @@ function handleError(err: unknown, res: Response): Response {
       [PulsarErrorCode.COMMITMENT_SIGN_FAILED]:    500,
       [PulsarErrorCode.SETTLEMENT_FAILED]:         500,
       [PulsarErrorCode.SETTLEMENT_RETRY_EXCEEDED]: 500,
+      [PulsarErrorCode.AGENT_EXECUTION_FAILED]:    500,
+      [PulsarErrorCode.INVALID_REQUEST]:           400,
+      [PulsarErrorCode.INTERNAL_ERROR]:            500,
     }
-    return res.status(statusMap[err.code] ?? 500).json({
-      error: err.message,
-      code: err.code,
-    })
+    
+    // Return user-friendly error message
+    const errorResponse = formatErrorResponse(err.code, err.message)
+    return res.status(statusMap[err.code] ?? 500).json(errorResponse)
   }
 
   console.error('Unexpected error:', err)
-  return res.status(500).json({
-    error: 'Internal server error',
-    details: err instanceof Error ? err.message : String(err),
-  })
+  const errorResponse = formatErrorResponse(
+    PulsarErrorCode.INTERNAL_ERROR,
+    err instanceof Error ? err.message : String(err)
+  )
+  return res.status(500).json(errorResponse)
 }

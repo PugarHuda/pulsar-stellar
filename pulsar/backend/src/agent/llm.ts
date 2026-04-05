@@ -1,104 +1,174 @@
 /**
  * agent/llm.ts
  *
- * Claude API integration for Pulsar AI agent.
+ * OpenRouter LLM integration for Pulsar AI agent.
  *
- * Uses Anthropic claude-3-haiku-20240307 (cheapest model) for real LLM calls.
- * Falls back to mock behavior gracefully if ANTHROPIC_API_KEY is not set.
+ * Uses OpenRouter API (openrouter.ai) with free models:
+ *   - Primary: qwen/qwen3.6-plus:free (1M context, strong agentic reasoning)
+ *   - Fallback: nvidia/nemotron-3-super:free (262K context)
+ *
+ * Falls back to mock behavior gracefully if OPENROUTER_API_KEY is not set.
+ * Also supports ANTHROPIC_API_KEY for backward compatibility.
  *
  * Context: See backend/CONTEXT.md
  */
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface AnthropicMessage {
-  role: 'user' | 'assistant'
+interface OpenRouterMessage {
+  role: 'user' | 'assistant' | 'system'
   content: string
 }
 
-interface AnthropicRequest {
+interface OpenRouterRequest {
   model: string
   max_tokens: number
-  messages: AnthropicMessage[]
+  messages: OpenRouterMessage[]
 }
 
-interface AnthropicResponse {
-  content: Array<{ type: string; text: string }>
-  usage?: { input_tokens: number; output_tokens: number }
+interface OpenRouterResponse {
+  choices: Array<{
+    message: { role: string; content: string }
+    finish_reason: string
+  }>
+  usage?: { prompt_tokens: number; completion_tokens: number }
+  model?: string
 }
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
-const CLAUDE_MODEL = 'claude-3-haiku-20240307'
-const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages'
-const ANTHROPIC_API_VERSION = '2023-06-01'
+const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions'
+
+// Free models on OpenRouter — ordered by preference for agentic tasks
+const FREE_MODELS = [
+  'qwen/qwen3.6-plus:free',       // Best: 1M context, strong agentic/coding
+  'nvidia/nemotron-3-super:free', // Fallback: 262K context, multi-agent
+  'minimax/minimax-m2.5:free',    // Fallback: 197K context, agentic
+]
+
+const PRIMARY_MODEL = FREE_MODELS[0]
 
 // ─── Main function ────────────────────────────────────────────────────────────
 
 /**
- * Call Claude API with a prompt and return the text response.
+ * Call LLM via OpenRouter with a prompt and return the text response.
  *
- * If ANTHROPIC_API_KEY is not set, returns a mock response gracefully.
- * Keeps max_tokens low (256) to minimize cost per call.
+ * Priority:
+ *   1. OPENROUTER_API_KEY → OpenRouter free models
+ *   2. ANTHROPIC_API_KEY → Claude (backward compat)
+ *   3. No key → mock fallback
  */
-export async function callClaude(prompt: string): Promise<string> {
-  const apiKey = process.env.ANTHROPIC_API_KEY
+export async function callLLM(prompt: string): Promise<string> {
+  const openRouterKey = process.env.OPENROUTER_API_KEY
+  const anthropicKey = process.env.ANTHROPIC_API_KEY
 
-  if (!apiKey) {
-    // Graceful fallback — no API key configured
-    return generateMockLlmResponse(prompt)
+  if (openRouterKey) {
+    return callOpenRouter(prompt, openRouterKey)
   }
 
-  try {
-    const body: AnthropicRequest = {
-      model: CLAUDE_MODEL,
-      max_tokens: 256,
-      messages: [{ role: 'user', content: prompt }],
-    }
+  if (anthropicKey) {
+    return callClaude(prompt, anthropicKey)
+  }
 
-    const res = await fetch(ANTHROPIC_API_URL, {
+  return generateMockLlmResponse(prompt)
+}
+
+/** @deprecated Use callLLM instead */
+export async function callClaude(prompt: string, apiKey?: string): Promise<string> {
+  const key = apiKey ?? process.env.ANTHROPIC_API_KEY
+  if (!key) return generateMockLlmResponse(prompt)
+
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': ANTHROPIC_API_VERSION,
+        'x-api-key': key,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-3-haiku-20240307',
+        max_tokens: 256,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    })
+
+    if (!res.ok) {
+      console.warn(`[Pulsar] Claude API error ${res.status}`)
+      return generateMockLlmResponse(prompt)
+    }
+
+    const data = await res.json() as { content: Array<{ type: string; text: string }> }
+    return data.content?.[0]?.text ?? generateMockLlmResponse(prompt)
+  } catch {
+    return generateMockLlmResponse(prompt)
+  }
+}
+
+/**
+ * Call OpenRouter API with a free model.
+ */
+async function callOpenRouter(prompt: string, apiKey: string): Promise<string> {
+  try {
+    const body: OpenRouterRequest = {
+      model: PRIMARY_MODEL,
+      max_tokens: 300,
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a concise AI agent. Respond in 2-3 sentences maximum. Be specific and actionable.',
+        },
+        { role: 'user', content: prompt },
+      ],
+    }
+
+    const res = await fetch(OPENROUTER_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+        'HTTP-Referer': 'https://github.com/PugarHuda/pulsar-stellar',
+        'X-Title': 'Pulsar — AI Agent Billing on Stellar',
       },
       body: JSON.stringify(body),
     })
 
     if (!res.ok) {
       const errText = await res.text()
-      console.warn(`[Pulsar] Claude API error ${res.status}: ${errText}`)
+      console.warn(`[Pulsar] OpenRouter error ${res.status}: ${errText.slice(0, 200)}`)
       return generateMockLlmResponse(prompt)
     }
 
-    const data = (await res.json()) as AnthropicResponse
-    const text = data.content?.[0]?.text ?? ''
+    const data = (await res.json()) as OpenRouterResponse
+    const text = data.choices?.[0]?.message?.content ?? ''
+    const model = data.model ?? PRIMARY_MODEL
 
     if (!text) {
       return generateMockLlmResponse(prompt)
     }
 
+    console.log(`[Pulsar] OpenRouter response via ${model} (${text.length} chars)`)
     return text
   } catch (err) {
-    console.warn(`[Pulsar] Claude API call failed: ${err instanceof Error ? err.message : String(err)}`)
+    console.warn(`[Pulsar] OpenRouter call failed: ${err instanceof Error ? err.message : String(err)}`)
     return generateMockLlmResponse(prompt)
   }
 }
 
 /**
- * Check if Claude API is available (API key is set).
+ * Check if a real LLM is available (OpenRouter or Anthropic key set).
  */
+export function isLLMAvailable(): boolean {
+  return Boolean(process.env.OPENROUTER_API_KEY || process.env.ANTHROPIC_API_KEY)
+}
+
+/** @deprecated Use isLLMAvailable instead */
 export function isClaudeAvailable(): boolean {
-  return Boolean(process.env.ANTHROPIC_API_KEY)
+  return isLLMAvailable()
 }
 
 // ─── Mock fallback ────────────────────────────────────────────────────────────
 
-/**
- * Generate a realistic mock LLM response when API key is not available.
- * Uses the prompt content to make the response contextually relevant.
- */
 function generateMockLlmResponse(prompt: string): string {
   const taskSnippet = prompt.slice(0, 60).replace(/\n/g, ' ')
   return (

@@ -67,7 +67,7 @@ router.get('/status', (_req: Request, res: Response) => {
 
   res.json({
     network: 'stellar:testnet',
-    aiMode: process.env.ANTHROPIC_API_KEY ? 'claude' : 'mock',
+    aiMode: process.env.OPENROUTER_API_KEY ? 'openrouter' : process.env.ANTHROPIC_API_KEY ? 'claude' : 'mock',
     contractId: process.env.CONTRACT_ID ?? null,
     demoMode: process.env.DEMO_MODE === 'true',
     userPublicKey,

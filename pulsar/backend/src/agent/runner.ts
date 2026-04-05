@@ -22,7 +22,7 @@
 import { getChannel, updateChannel } from '../channel/store.js'
 import { signCommitment } from '../channel/manager.js'
 import { generateTaskSteps } from './steps.js'
-import { callClaude, isClaudeAvailable } from './llm.js'
+import { callLLM, isLLMAvailable } from './llm.js'
 import { usdcToBaseUnits, baseUnitsToUsdc } from '../stellar/config.js'
 import { broadcast } from '../api/sse.js'
 import {
@@ -89,7 +89,7 @@ export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> 
 
   const steps = generateTaskSteps(taskDescription)
   const budgetUsdc = baseUnitsToUsdc(channel.budgetBaseUnits)
-  const useRealLlm = isClaudeAvailable()
+  const useRealLlm = isLLMAvailable()
 
   let completedSteps = 0
   let cumulativeCostUsdc = 0
@@ -211,7 +211,7 @@ async function executeStep(
     case 'llm_call': {
       if (useRealLlm) {
         const prompt = buildLlmPrompt(taskDescription)
-        const result = await callClaude(prompt)
+        const result = await callLLM(prompt)
         // Return a concise description of what was done
         return `LLM analysis: ${result.slice(0, 120).replace(/\n/g, ' ')}${result.length > 120 ? '...' : ''}`
       }
@@ -223,7 +223,7 @@ async function executeStep(
     case 'reasoning': {
       if (useRealLlm) {
         const prompt = buildReasoningPrompt(taskDescription)
-        const result = await callClaude(prompt)
+        const result = await callLLM(prompt)
         return `Reasoning: ${result.slice(0, 120).replace(/\n/g, ' ')}${result.length > 120 ? '...' : ''}`
       }
       await sleepImpl(200 + Math.random() * 300)

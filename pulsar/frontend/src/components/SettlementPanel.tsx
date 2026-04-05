@@ -71,13 +71,13 @@ export function SettlementPanel({
   }
 
   return (
-    <div className={`bg-white rounded-2xl shadow-lg border p-6 transition-all duration-500 ${
+    <div className={`bg-white rounded-2xl shadow-lg border p-6 transition-all duration-500 animate-fade-in ${
       settlement ? 'border-green-300 shadow-green-100' : 'border-gray-100'
     }`}>
       {/* Header */}
       <div className="flex items-center gap-3 mb-6">
         <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${
-          settlement ? 'bg-green-100' : 'bg-green-100'
+          settlement ? 'bg-green-100' : 'bg-green-50'
         }`}>
           <span className="text-lg">{settlement ? '✅' : '🔒'}</span>
         </div>
@@ -103,7 +103,7 @@ export function SettlementPanel({
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-500">You get back</span>
-                <span className="font-semibold text-green-600">
+                <span className="font-bold text-green-600 text-base">
                   {remainingBudgetUsdc.toFixed(4)} USDC
                 </span>
               </div>
@@ -182,7 +182,7 @@ export function SettlementPanel({
             </div>
           </div>
 
-          {/* Breakdown */}
+          {/* Breakdown — highlight refund prominently */}
           <div className="bg-gray-50 rounded-xl p-4 space-y-2">
             <div className="flex justify-between text-sm">
               <span className="text-gray-500">Server earned</span>
@@ -190,9 +190,9 @@ export function SettlementPanel({
                 {settlement.amountPaidUsdc.toFixed(4)} USDC
               </span>
             </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-gray-500">You get back</span>
-              <span className="font-semibold text-green-600">
+            <div className="flex justify-between items-center">
+              <span className="text-sm text-gray-500">You get back</span>
+              <span className="font-bold text-green-600 text-lg">
                 {settlement.refundUsdc.toFixed(4)} USDC
               </span>
             </div>
@@ -218,12 +218,12 @@ export function SettlementPanel({
             </div>
           </div>
 
-          {/* Explorer link */}
+          {/* Explorer link — prominent */}
           <a
             href={settlement.explorerUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center justify-center gap-2 w-full py-2.5 px-4 border border-stellar-500 text-stellar-600 hover:bg-stellar-50 font-medium rounded-lg transition-colors text-sm"
+            className="flex items-center justify-center gap-2 w-full py-3 px-4 bg-stellar-600 hover:bg-stellar-700 text-white font-semibold rounded-lg transition-colors text-sm shadow-md"
           >
             <span>View on Stellar Explorer</span>
             <span>↗</span>

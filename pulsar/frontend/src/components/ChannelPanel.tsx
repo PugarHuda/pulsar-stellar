@@ -8,6 +8,7 @@
  * - Contract address link to Stellar Explorer
  * - USDC balance check status indicator
  * - Spinner animation during loading
+ * - "Demo key" quick-fill from /api/status
  *
  * Context: See frontend/CONTEXT.md
  */
@@ -23,7 +24,7 @@ interface ChannelInfo {
 
 interface ChannelPanelProps {
   onChannelOpened: (channelId: string, budgetUsdc: number) => void
-  aiMode?: 'claude' | 'mock' | null
+  aiMode?: 'openrouter' | 'claude' | 'mock' | null
 }
 
 export function ChannelPanel({ onChannelOpened, aiMode }: ChannelPanelProps) {
@@ -96,7 +97,7 @@ export function ChannelPanel({ onChannelOpened, aiMode }: ChannelPanelProps) {
     : null
 
   return (
-    <div className="bg-white rounded-2xl shadow-lg border border-gray-100 p-6">
+    <div className="bg-white rounded-2xl shadow-lg border border-gray-100 p-6 animate-fade-in">
       {/* Header */}
       <div className="flex items-center gap-3 mb-6">
         <div className="w-10 h-10 rounded-full bg-stellar-100 flex items-center justify-center">
@@ -160,8 +161,8 @@ export function ChannelPanel({ onChannelOpened, aiMode }: ChannelPanelProps) {
           {balanceStatus !== 'idle' && (
             <div className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg ${
               balanceStatus === 'checking' ? 'bg-blue-50 text-blue-600' :
-              balanceStatus === 'ok' ? 'bg-green-50 text-green-600' :
-              'bg-red-50 text-red-600'
+              balanceStatus === 'ok'       ? 'bg-green-50 text-green-600' :
+                                             'bg-red-50 text-red-600'
             }`}>
               {balanceStatus === 'checking' && (
                 <>
@@ -169,7 +170,7 @@ export function ChannelPanel({ onChannelOpened, aiMode }: ChannelPanelProps) {
                   Checking USDC balance...
                 </>
               )}
-              {balanceStatus === 'ok' && <><span>✓</span> USDC balance verified</>}
+              {balanceStatus === 'ok'    && <><span>✓</span> USDC balance verified</>}
               {balanceStatus === 'error' && <><span>✗</span> Balance check failed</>}
             </div>
           )}
@@ -199,7 +200,7 @@ export function ChannelPanel({ onChannelOpened, aiMode }: ChannelPanelProps) {
         </div>
       ) : (
         /* Channel opened — show info */
-        <div className="space-y-3">
+        <div className="space-y-3 animate-fade-in">
           <div className="flex items-center gap-2 mb-4">
             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
               ● {channel.status}
@@ -207,11 +208,13 @@ export function ChannelPanel({ onChannelOpened, aiMode }: ChannelPanelProps) {
             <span className="text-sm text-gray-500">Channel active</span>
             {aiMode != null && (
               <span className={`ml-auto inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                aiMode === 'claude'
+                aiMode === 'openrouter'
+                  ? 'bg-green-100 text-green-700'
+                  : aiMode === 'claude'
                   ? 'bg-purple-100 text-purple-700'
                   : 'bg-gray-100 text-gray-500'
               }`}>
-                {aiMode === 'claude' ? '🤖 Real AI' : '🎭 Demo AI'}
+                {aiMode === 'openrouter' ? '🤖 OpenRouter AI' : aiMode === 'claude' ? '🤖 Real AI' : '🎭 Demo AI'}
               </span>
             )}
           </div>

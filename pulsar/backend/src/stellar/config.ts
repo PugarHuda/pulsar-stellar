@@ -32,7 +32,9 @@ export const HORIZON_URL =
 export const horizonServer = new Horizon.Server(HORIZON_URL)
 
 /** Soroban RPC client for smart contract operations */
-export const sorobanRpc = new SorobanRpc.Server(SOROBAN_RPC_URL)
+export const sorobanRpc = new SorobanRpc.Server(SOROBAN_RPC_URL, {
+  allowHttp: false,
+})
 
 // ─── USDC Asset ─────────────────────────────────────────────────────────────
 

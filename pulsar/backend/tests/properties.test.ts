@@ -64,6 +64,8 @@ process.env.HORIZON_URL = 'https://horizon-testnet.stellar.org'
 process.env.NETWORK_PASSPHRASE = 'Test SDF Network ; September 2015'
 process.env.USDC_ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5'
 process.env.USDC_SAC_ADDRESS = 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA'
+// Unset CONTRACT_ID so tests use mock contract (no real Soroban calls)
+delete process.env.CONTRACT_ID
 
 /** Create a test channel in the store */
 function createTestChannel(budgetUsdc: number): Channel {

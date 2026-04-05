@@ -30,6 +30,7 @@ import {
 import { v4 as uuidv4 } from 'uuid'
 import {
   getServerKeypair,
+  getUserKeypair,
   getUsdcBalance,
   usdcToBaseUnits,
   baseUnitsToUsdc,
@@ -329,10 +330,13 @@ export async function settleChannel(
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
 /**
- * Deploy the one-way-channel Soroban contract.
+ * Deploy a new one-way-channel Soroban contract instance and invoke open_channel.
  *
- * If CONTRACT_ID env var is set → invoke real Soroban open_channel function.
- * Otherwise (demo mode) → return a deterministic mock contract address.
+ * Architecture: Each payment channel = one Soroban contract instance.
+ * CONTRACT_WASM_HASH env var = the uploaded WASM hash (from `stellar contract deploy --wasm`)
+ * We deploy a new instance per channel, then call open_channel on it.
+ *
+ * Falls back to mock if CONTRACT_WASM_HASH is not set.
  */
 async function deployChannelContract(params: {
   channelId: string
@@ -343,78 +347,91 @@ async function deployChannelContract(params: {
   const contractId = process.env.CONTRACT_ID
 
   if (contractId) {
-    // ── Real Soroban invocation ──────────────────────────────────────────────
-    try {
-      const serverKeypair = getServerKeypair()
-      const contract = new Contract(contractId)
-
-      // Load server account for sequence number
-      const account = await sorobanRpc.getAccount(serverKeypair.publicKey())
-
-      // Expiry: 1 hour from now (Unix seconds)
-      const expiry = Math.floor(Date.now() / 1000) + 3600
-
-      const tx = new TransactionBuilder(account, {
-        fee: BASE_FEE,
-        networkPassphrase: NETWORK_PASSPHRASE,
-      })
-        .addOperation(
-          contract.call(
-            'open_channel',
-            nativeToScVal(params.userPublicKey, { type: 'address' }),
-            nativeToScVal(serverKeypair.publicKey(), { type: 'address' }),
-            nativeToScVal(USDC_SAC_ADDRESS, { type: 'address' }),
-            nativeToScVal(params.budgetBaseUnits, { type: 'i128' }),
-            xdr.ScVal.scvU64(xdr.Uint64.fromString(String(expiry))),
-          ),
-        )
-        .setTimeout(30)
-        .build()
-
-      // Simulate first to get the prepared transaction
-      const simResult = await sorobanRpc.simulateTransaction(tx)
-      if ('error' in simResult) {
-        throw new Error(`Soroban simulation failed: ${simResult.error}`)
-      }
-
-      const preparedTx = await sorobanRpc.prepareTransaction(tx)
-      preparedTx.sign(serverKeypair)
-
-      const sendResult = await sorobanRpc.sendTransaction(preparedTx)
-      if (sendResult.status === 'ERROR') {
-        throw new Error(`Soroban sendTransaction failed: ${JSON.stringify(sendResult.errorResult)}`)
-      }
-
-      // Poll for confirmation
-      const txHash = sendResult.hash
-      let getResult = await sorobanRpc.getTransaction(txHash)
-      let attempts = 0
-      while (getResult.status === 'NOT_FOUND' && attempts < 20) {
-        await sleep(1000)
-        getResult = await sorobanRpc.getTransaction(txHash)
-        attempts++
-      }
-
-      if (getResult.status !== 'SUCCESS') {
-        throw new Error(`open_channel transaction failed: ${getResult.status}`)
-      }
-
-      // Return the contract address as the channel contract
-      return contractId
-    } catch (err) {
-      throw new Error(
-        `Failed to invoke open_channel on Soroban contract: ${err instanceof Error ? err.message : String(err)}`,
-      )
-    }
+    // CONTRACT_ID is a deployed contract address — invoke open_channel on it
+    return await invokeOpenChannel(contractId, params)
   }
 
   // ── Demo mode: deterministic mock contract address ───────────────────────
   const hash = Buffer.from(params.channelId.replace(/-/g, ''), 'hex')
   const padded = Buffer.alloc(32)
   hash.copy(padded, 0, 0, Math.min(hash.length, 32))
-
   const mockContractId = `C${Buffer.from(padded).toString('base64url').toUpperCase().slice(0, 55)}`
   return mockContractId
+}
+
+/**
+ * Invoke open_channel on an existing Soroban contract instance.
+ */
+async function invokeOpenChannel(
+  contractId: string,
+  params: {
+    userPublicKey: string
+    serverPublicKey: string
+    budgetBaseUnits: bigint
+  },
+): Promise<string> {
+  try {
+    const serverKeypair = getServerKeypair()
+    const userKeypair = getUserKeypair()
+    const contract = new Contract(contractId)
+
+    // Use USER as transaction source — this implicitly authorizes sender.require_auth()
+    // and token.transfer from sender (source account authorization)
+    const userAccount = await sorobanRpc.getAccount(userKeypair.publicKey())
+    const expiry = Math.floor(Date.now() / 1000) + 3600
+
+    const tx = new TransactionBuilder(userAccount, {
+      fee: String(Number(BASE_FEE) * 10),
+      networkPassphrase: NETWORK_PASSPHRASE,
+    })
+      .addOperation(
+        contract.call(
+          'open_channel',
+          nativeToScVal(params.userPublicKey, { type: 'address' }),
+          nativeToScVal(serverKeypair.publicKey(), { type: 'address' }),
+          nativeToScVal(USDC_SAC_ADDRESS, { type: 'address' }),
+          nativeToScVal(params.budgetBaseUnits, { type: 'i128' }),
+          xdr.ScVal.scvU64(xdr.Uint64.fromString(String(expiry))),
+        ),
+      )
+      .setTimeout(60)
+      .build()
+
+    // Simulate to get resource fees
+    const simResult = await sorobanRpc.simulateTransaction(tx)
+    if ('error' in simResult) {
+      throw new Error(`Soroban simulation failed: ${simResult.error}`)
+    }
+
+    // Prepare and sign with user keypair (source account = implicit auth)
+    const preparedTx = await sorobanRpc.prepareTransaction(tx)
+    preparedTx.sign(userKeypair)
+
+    const sendResult = await sorobanRpc.sendTransaction(preparedTx)
+    if (sendResult.status === 'ERROR') {
+      throw new Error(`sendTransaction failed: ${JSON.stringify(sendResult.errorResult)}`)
+    }
+
+    let getResult = await sorobanRpc.getTransaction(sendResult.hash)
+    let attempts = 0
+    while (getResult.status === 'NOT_FOUND' && attempts < 30) {
+      await sleep(1000)
+      getResult = await sorobanRpc.getTransaction(sendResult.hash)
+      attempts++
+    }
+
+    if (getResult.status !== 'SUCCESS') {
+      const resultMeta = getResult as { resultXdr?: string; status: string }
+      throw new Error(`open_channel tx failed: ${getResult.status}${resultMeta.resultXdr ? ` (${resultMeta.resultXdr})` : ''}`)
+    }
+
+    console.log(`[Pulsar] open_channel success: https://stellar.expert/explorer/testnet/tx/${sendResult.hash}`)
+    return contractId
+  } catch (err) {
+    throw new Error(
+      `Failed to invoke open_channel on Soroban contract: ${err instanceof Error ? err.message : String(err)}`,
+    )
+  }
 }
 
 /**
@@ -434,26 +451,37 @@ async function submitSettlementTx(params: {
     // ── Real Soroban close_channel invocation ────────────────────────────────
     try {
       const serverKeypair = getServerKeypair()
+      const userKeypair = getUserKeypair()
       const contract = new Contract(contractId)
 
-      const account = await sorobanRpc.getAccount(serverKeypair.publicKey())
+      // Build the correct signature for close_channel:
+      // Message = channel_id (32 bytes from contract address XDR) || amount (8 bytes big-endian)
+      const contractAddr = new Address(contractId)
+      const contractXdr = contractAddr.toScAddress().toXDR()
+      const channelIdBytes = contractXdr.slice(contractXdr.length - 32)
 
-      // Build signature ScVal (BytesN<64>)
-      const sigBytes = params.finalSig ?? new Uint8Array(64)
-      const sigScVal = xdr.ScVal.scvBytes(Buffer.from(sigBytes))
+      const amountBytes = Buffer.alloc(8)
+      amountBytes.writeBigUInt64BE(params.finalAmount)
+      const message = Buffer.concat([channelIdBytes, amountBytes])
+
+      // Server signs the message (recipient in contract)
+      const signature = serverKeypair.sign(message)
+
+      // Use user as source account (implicit auth for token operations)
+      const account = await sorobanRpc.getAccount(userKeypair.publicKey())
 
       const tx = new TransactionBuilder(account, {
-        fee: BASE_FEE,
+        fee: String(Number(BASE_FEE) * 10),
         networkPassphrase: NETWORK_PASSPHRASE,
       })
         .addOperation(
           contract.call(
             'close_channel',
             nativeToScVal(params.finalAmount, { type: 'i128' }),
-            sigScVal,
+            xdr.ScVal.scvBytes(Buffer.from(signature)),
           ),
         )
-        .setTimeout(30)
+        .setTimeout(60)
         .build()
 
       const simResult = await sorobanRpc.simulateTransaction(tx)
@@ -462,7 +490,7 @@ async function submitSettlementTx(params: {
       }
 
       const preparedTx = await sorobanRpc.prepareTransaction(tx)
-      preparedTx.sign(serverKeypair)
+      preparedTx.sign(userKeypair)
 
       const sendResult = await sorobanRpc.sendTransaction(preparedTx)
       if (sendResult.status === 'ERROR') {
@@ -483,6 +511,7 @@ async function submitSettlementTx(params: {
         throw new Error(`close_channel transaction failed: ${getResult.status}`)
       }
 
+      console.log(`[Pulsar] close_channel success: https://stellar.expert/explorer/testnet/tx/${txHash}`)
       return txHash
     } catch (err) {
       throw new Error(

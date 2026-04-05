@@ -28,6 +28,8 @@ process.env.HORIZON_URL = 'https://horizon-testnet.stellar.org'
 process.env.NETWORK_PASSPHRASE = 'Test SDF Network ; September 2015'
 process.env.USDC_ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5'
 process.env.USDC_SAC_ADDRESS = 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA'
+// Unset CONTRACT_ID so tests use mock settlement (no real Soroban calls)
+delete process.env.CONTRACT_ID
 
 // ─── Mock stellar/config ──────────────────────────────────────────────────────
 
@@ -38,6 +40,14 @@ vi.mock('../src/stellar/config.js', async (importOriginal) => {
     getUsdcBalance: vi.fn().mockResolvedValue('100.0000000'),
     getServerKeypair: () => TEST_SERVER_KEYPAIR,
     getUserKeypair: () => TEST_USER_KEYPAIR,
+    // Mock sorobanRpc so integration tests don't hit real testnet
+    sorobanRpc: {
+      getAccount: vi.fn().mockRejectedValue(new Error('sorobanRpc mocked')),
+      simulateTransaction: vi.fn().mockRejectedValue(new Error('sorobanRpc mocked')),
+      prepareTransaction: vi.fn().mockRejectedValue(new Error('sorobanRpc mocked')),
+      sendTransaction: vi.fn().mockRejectedValue(new Error('sorobanRpc mocked')),
+      getTransaction: vi.fn().mockRejectedValue(new Error('sorobanRpc mocked')),
+    },
   }
 })
 
@@ -183,6 +193,12 @@ describe('Settlement retry logic (Requirements 4.3)', () => {
 // happy path and the guard conditions (already closed, not found).
 
 describe('settleChannel integration (real manager)', () => {
+  beforeEach(() => {
+    // Ensure no CONTRACT_ID so settlement uses mock path (not real Soroban)
+    const saved = process.env.CONTRACT_ID
+    process.env.CONTRACT_ID = ''
+    return () => { process.env.CONTRACT_ID = saved }
+  })
   it('settles a channel successfully in demo mode', async () => {
     const { settleChannel } = await import('../src/channel/manager.js')
 

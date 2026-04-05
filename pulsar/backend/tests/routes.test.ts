@@ -1,4 +1,4 @@
-﻿/**
+/**
  * tests/routes.test.ts
  *
  * Unit tests for API routes.
@@ -165,8 +165,8 @@ describe('POST /api/channels', () => {
     })
 
     expect(status).toBe(402)
-    expect(body.error).toContain('USDC')
-    expect(body.code).toBe(PulsarErrorCode.INSUFFICIENT_USDC_BALANCE)
+    expect(body.error.message).toContain('USDC')
+    expect(body.error.code).toBe(PulsarErrorCode.INSUFFICIENT_USDC_BALANCE)
   })
 })
 

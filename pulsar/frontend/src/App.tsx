@@ -39,7 +39,21 @@ export default function App() {
   const [totalChannelsOpened, setTotalChannelsOpened] = useState(0)
   const [totalUsdcSpent, setTotalUsdcSpent] = useState(0)
 
-  // Connect to SSE stream
+  // Backend status (AI mode)
+  const [aiMode, setAiMode] = useState<'claude' | 'mock' | null>(null)
+
+  // Fetch backend status on mount
+  useEffect(() => {
+    fetch('/api/status')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.aiMode === 'claude' || data.aiMode === 'mock') {
+          setAiMode(data.aiMode)
+        }
+      })
+      .catch(() => {/* ignore */})
+  }, [])
+
   useEffect(() => {
     const es = new EventSource('/api/events')
     eventSourceRef.current = es
@@ -108,6 +122,16 @@ export default function App() {
           <span className="ml-2 px-2 py-0.5 rounded-full bg-white/10 border border-white/20 text-white/70 text-xs font-medium">
             Stellar Testnet
           </span>
+          {/* AI mode badge */}
+          {aiMode !== null && (
+            <span className={`px-2 py-0.5 rounded-full border text-xs font-medium ${
+              aiMode === 'claude'
+                ? 'bg-purple-500/20 border-purple-400/30 text-purple-200'
+                : 'bg-white/10 border-white/20 text-white/50'
+            }`}>
+              AI: {aiMode === 'claude' ? 'Claude' : 'Mock'}
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-4">
@@ -171,7 +195,7 @@ export default function App() {
 
         {/* Panels */}
         <div className="grid gap-4 md:grid-cols-1 lg:grid-cols-3">
-          <ChannelPanel onChannelOpened={handleChannelOpened} />
+          <ChannelPanel onChannelOpened={handleChannelOpened} aiMode={aiMode} />
 
           <TaskPanel
             channelId={channelId}

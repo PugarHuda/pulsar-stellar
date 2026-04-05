@@ -15,6 +15,7 @@
 
 import { Router, type Request, type Response } from 'express'
 import { z } from 'zod'
+import { Keypair } from '@stellar/stellar-sdk'
 import { openChannel, settleChannel } from '../channel/manager.js'
 import { getChannel } from '../channel/store.js'
 import { runAgent } from '../agent/runner.js'
@@ -48,6 +49,29 @@ const RunTaskSchema = z.object({
  */
 router.get('/events', (req: Request, res: Response) => {
   addClient(res)
+})
+
+/**
+ * GET /api/status
+ * Returns backend status: network, AI mode, contract ID, demo mode, user public key.
+ */
+router.get('/status', (_req: Request, res: Response) => {
+  let userPublicKey: string | null = null
+  try {
+    if (process.env.USER_SECRET_KEY) {
+      userPublicKey = Keypair.fromSecret(process.env.USER_SECRET_KEY).publicKey()
+    }
+  } catch {
+    // ignore invalid key
+  }
+
+  res.json({
+    network: 'stellar:testnet',
+    aiMode: process.env.ANTHROPIC_API_KEY ? 'claude' : 'mock',
+    contractId: process.env.CONTRACT_ID ?? null,
+    demoMode: process.env.DEMO_MODE === 'true',
+    userPublicKey,
+  })
 })
 
 /**

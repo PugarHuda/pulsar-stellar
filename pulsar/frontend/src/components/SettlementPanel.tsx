@@ -168,7 +168,7 @@ export function SettlementPanel({
               <div>
                 <p className="text-xs font-medium text-gray-700">Agent task completed</p>
                 <p className="text-xs text-gray-400">
-                  {Math.round(settlement.amountPaidUsdc / 0.05)} off-chain commitments signed
+                  {settlement.amountPaidUsdc.toFixed(4)} USDC in off-chain commitments
                 </p>
               </div>
             </div>
@@ -233,7 +233,7 @@ export function SettlementPanel({
           <div className="bg-stellar-50 rounded-xl p-4 text-center">
             <p className="text-xs text-stellar-700 font-medium">
               ⚡ Pulsar: {settlement.amountPaidUsdc > 0
-                ? `${Math.round(settlement.amountPaidUsdc / 0.05)} off-chain commitments → 1 on-chain tx`
+                ? `${settlement.amountPaidUsdc.toFixed(4)} USDC in off-chain commitments → 1 on-chain tx`
                 : '0 commitments → 1 on-chain tx (full refund)'}
             </p>
           </div>

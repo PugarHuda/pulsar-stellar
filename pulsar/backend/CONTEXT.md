@@ -45,6 +45,7 @@ backend/
 | POST | `/api/channels/:id/run` | Run agent task (SSE stream) |
 | POST | `/api/channels/:id/settle` | Close channel + settle on-chain |
 | GET | `/api/events` | SSE event stream |
+| GET | `/api/status` | Backend status: aiMode, network, contractId, demoMode |
 
 ## Real vs Demo Mode
 

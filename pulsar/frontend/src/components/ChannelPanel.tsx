@@ -23,9 +23,10 @@ interface ChannelInfo {
 
 interface ChannelPanelProps {
   onChannelOpened: (channelId: string, budgetUsdc: number) => void
+  aiMode?: 'claude' | 'mock' | null
 }
 
-export function ChannelPanel({ onChannelOpened }: ChannelPanelProps) {
+export function ChannelPanel({ onChannelOpened, aiMode }: ChannelPanelProps) {
   const [budgetUsdc, setBudgetUsdc] = useState<string>('10')
   const [userPublicKey, setUserPublicKey] = useState<string>('')
   const [loading, setLoading] = useState(false)
@@ -33,6 +34,22 @@ export function ChannelPanel({ onChannelOpened }: ChannelPanelProps) {
   const [channel, setChannel] = useState<ChannelInfo | null>(null)
   const [copiedChannelId, setCopiedChannelId] = useState(false)
   const [balanceStatus, setBalanceStatus] = useState<'idle' | 'checking' | 'ok' | 'error'>('idle')
+  const [demoKeyLoading, setDemoKeyLoading] = useState(false)
+
+  async function handleUseDemoKey() {
+    setDemoKeyLoading(true)
+    try {
+      const res = await fetch('/api/status')
+      const data = await res.json()
+      if (data.userPublicKey) {
+        setUserPublicKey(data.userPublicKey)
+      }
+    } catch {
+      // ignore
+    } finally {
+      setDemoKeyLoading(false)
+    }
+  }
 
   async function handleOpenChannel() {
     setError(null)
@@ -119,13 +136,24 @@ export function ChannelPanel({ onChannelOpened }: ChannelPanelProps) {
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Your Stellar Public Key (G...)
             </label>
-            <input
-              type="text"
-              value={userPublicKey}
-              onChange={(e) => setUserPublicKey(e.target.value)}
-              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-stellar-500 focus:border-transparent outline-none text-gray-900 font-mono text-sm"
-              placeholder="GABC...XYZ"
-            />
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={userPublicKey}
+                onChange={(e) => setUserPublicKey(e.target.value)}
+                className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-stellar-500 focus:border-transparent outline-none text-gray-900 font-mono text-sm"
+                placeholder="GABC...XYZ"
+              />
+              <button
+                type="button"
+                onClick={handleUseDemoKey}
+                disabled={demoKeyLoading}
+                className="px-3 py-2.5 text-xs font-medium text-stellar-600 border border-stellar-300 rounded-lg hover:bg-stellar-50 disabled:opacity-50 transition-colors shrink-0"
+                title="Fill in the demo user public key from backend config"
+              >
+                {demoKeyLoading ? '...' : 'Demo key'}
+              </button>
+            </div>
           </div>
 
           {/* Balance check status */}
@@ -177,6 +205,15 @@ export function ChannelPanel({ onChannelOpened }: ChannelPanelProps) {
               ● {channel.status}
             </span>
             <span className="text-sm text-gray-500">Channel active</span>
+            {aiMode != null && (
+              <span className={`ml-auto inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                aiMode === 'claude'
+                  ? 'bg-purple-100 text-purple-700'
+                  : 'bg-gray-100 text-gray-500'
+              }`}>
+                {aiMode === 'claude' ? '🤖 Real AI' : '🎭 Demo AI'}
+              </span>
+            )}
           </div>
 
           {/* Channel ID with copy button */}

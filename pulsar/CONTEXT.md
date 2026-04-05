@@ -17,6 +17,30 @@ Task done → server closes channel → 1 on-chain settlement tx
 User receives refund of unused budget
 ```
 
+## Real vs Mock — Accurate Summary
+
+### Stellar / Soroban — 100% REAL
+- `open_channel` → real Soroban contract call on Stellar Testnet (when `CONTRACT_ID` set)
+- `close_channel` → real Soroban contract call on Stellar Testnet (when `CONTRACT_ID` set)
+- Ed25519 commitment signing → real cryptography (always, both modes)
+- USDC balance check → real Horizon API (when `DEMO_MODE=false`)
+
+### AI Agent — PARTIALLY REAL
+- `llm.ts` has full Claude API integration (claude-3-haiku-20240307)
+- `llm_call` and `reasoning` steps → real Claude API when `ANTHROPIC_API_KEY` is set
+- Falls back to mock descriptions gracefully if key not set or API call fails
+- `tool_web_search`, `tool_code_exec`, `tool_data_fetch` → always simulated (intentional for demo)
+
+### Agent Step Generation — MOCK (intentional)
+- `steps.ts` generates deterministic steps based on task hash
+- Step costs are fixed (llm_call: 0.05, web_search: 0.02, etc.)
+- Intentional for demo predictability and reproducible test results
+
+### Frontend — REAL
+- `GET /api/status` → shows "🤖 Claude AI" or "🎭 Demo Mode" badge in header
+- Real-time SSE step streaming with live LLM response text
+- All UI state driven by actual backend events
+
 ## Real vs Demo Mode
 
 | Mode | Trigger | Behavior |
@@ -35,7 +59,9 @@ User receives refund of unused budget
 | Contract deployment | 🔵 Mock address | ✅ Real Soroban `open_channel` |
 | Settlement tx | 🔵 Mock hash | ✅ Real Soroban `close_channel` |
 | USDC transfer | 🔵 Simulated | ✅ Real on-chain transfer |
-| AI agent steps | 🔵 Mock descriptions | ✅ Real Claude API (if key set) |
+| AI agent (llm_call, reasoning) | 🔵 Mock descriptions | ✅ Real Claude API (if `ANTHROPIC_API_KEY` set) |
+| AI agent (tool calls) | 🔵 Simulated | 🔵 Simulated (realistic, intentional) |
+| Agent step generation | 🔵 Deterministic mock | 🔵 Deterministic mock (intentional) |
 
 ## Stack
 - **Backend**: Node.js 20+, TypeScript, Express, `@stellar/stellar-sdk`

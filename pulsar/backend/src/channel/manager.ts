@@ -341,9 +341,8 @@ async function deployChannelContract(params: {
   budgetBaseUnits: bigint
 }): Promise<string> {
   const contractId = process.env.CONTRACT_ID
-  const demoMode = process.env.DEMO_MODE === 'true' || !contractId
 
-  if (!demoMode && contractId) {
+  if (contractId) {
     // ── Real Soroban invocation ──────────────────────────────────────────────
     try {
       const serverKeypair = getServerKeypair()
@@ -430,9 +429,8 @@ async function submitSettlementTx(params: {
   finalSig: Uint8Array | null
 }): Promise<string> {
   const contractId = process.env.CONTRACT_ID
-  const demoMode = process.env.DEMO_MODE === 'true' || !contractId
 
-  if (!demoMode && contractId) {
+  if (contractId) {
     // ── Real Soroban close_channel invocation ────────────────────────────────
     try {
       const serverKeypair = getServerKeypair()

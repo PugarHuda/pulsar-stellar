@@ -380,12 +380,12 @@ export async function initializeGlobalContract(): Promise<void> {
 /**
  * Deploy a new one-way-channel Soroban contract instance and invoke open_channel.
  *
- * Architecture:
- *   - Always try to deploy a fresh contract instance per channel (avoids "channel already open")
- *   - If deployment fails, fall back to globalContractId (deployed at startup)
- *   - If both fail, return mock address (demo mode)
+ * Architecture for hackathon demo:
+ *   - Use globalContractId (deployed at startup) for all channels
+ *   - This is pragmatic for demo: one contract, multiple channels
+ *   - In test mode (no CONTRACT_WASM_HASH): return mock contract for testing
  *
- * For production: each channel gets its own contract instance to avoid state conflicts.
+ * For production: each channel would get its own contract instance to avoid state conflicts.
  */
 async function deployChannelContract(params: {
   channelId: string
@@ -393,10 +393,10 @@ async function deployChannelContract(params: {
   serverPublicKey: string
   budgetBaseUnits: bigint
 }): Promise<string> {
-  // Skip real deployment if WASM hash not set (test mode)
+  // Test mode: return mock contract (allows tests to run without real Soroban)
   const wasmHash = process.env.CONTRACT_WASM_HASH
   if (!wasmHash) {
-    console.log('[Pulsar] No CONTRACT_WASM_HASH set, using mock contract')
+    console.log('[Pulsar] Test mode: using mock contract (no CONTRACT_WASM_HASH)')
     const hash = Buffer.from(params.channelId.replace(/-/g, ''), 'hex')
     const padded = Buffer.alloc(32)
     hash.copy(padded, 0, 0, Math.min(hash.length, 32))
@@ -404,32 +404,26 @@ async function deployChannelContract(params: {
     return mockContractId
   }
 
-  // Try to deploy a fresh contract instance per channel (best for production)
+  // Production mode: use global contract
+  if (!globalContractId) {
+    throw new Error(
+      'No contract available. Please ensure CONTRACT_WASM_HASH is set and backend started successfully. ' +
+      'Check backend logs for contract deployment status.'
+    )
+  }
+
+  // Use the global contract for all channels (demo mode)
   try {
-    console.log(`[Pulsar] Deploying fresh contract for channel ${params.channelId}...`)
-    const freshContractId = await deployFreshContract()
-    console.log(`[Pulsar] ✓ Fresh contract deployed: ${freshContractId}`)
-    return await invokeOpenChannel(freshContractId, params)
-  } catch (deployErr) {
-    console.warn(`[Pulsar] Fresh deploy failed: ${deployErr instanceof Error ? deployErr.message : deployErr}`)
-    
-    // Fallback 1: Try global contract (if available and not used)
-    if (globalContractId) {
-      try {
-        console.log(`[Pulsar] Trying global contract: ${globalContractId}`)
-        return await invokeOpenChannel(globalContractId, params)
-      } catch (globalErr) {
-        console.warn(`[Pulsar] Global contract failed: ${globalErr instanceof Error ? globalErr.message : globalErr}`)
-      }
-    }
-    
-    // Fallback 2: Demo mode (mock contract address)
-    console.log(`[Pulsar] Falling back to demo mode (mock contract)`)
-    const hash = Buffer.from(params.channelId.replace(/-/g, ''), 'hex')
-    const padded = Buffer.alloc(32)
-    hash.copy(padded, 0, 0, Math.min(hash.length, 32))
-    const mockContractId = `C${Buffer.from(padded).toString('base64url').toUpperCase().slice(0, 55)}`
-    return mockContractId
+    console.log(`[Pulsar] Using global contract ${globalContractId} for channel ${params.channelId}...`)
+    return await invokeOpenChannel(globalContractId, params)
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err)
+    console.error(`[Pulsar] Failed to open channel on contract ${globalContractId}: ${errorMsg}`)
+    throw new Error(
+      `Failed to open payment channel: ${errorMsg}. ` +
+      'This may be because the contract already has an open channel. ' +
+      'For demo purposes, please settle the existing channel first or restart the backend to deploy a fresh contract.'
+    )
   }
 }
 
@@ -448,7 +442,7 @@ export async function deployFreshContract(): Promise<string> {
   try {
     console.log(`[Pulsar] Fetching account ${serverKeypair.publicKey()}...`)
     const account = await sorobanRpc.getAccount(serverKeypair.publicKey())
-    console.log(`[Pulsar] Account sequence: ${account.sequence}`)
+    console.log(`[Pulsar] Account fetched successfully`)
     
     const salt = Buffer.from(crypto.getRandomValues(new Uint8Array(32)))
     const wasmHashBytes = Buffer.from(WASM_HASH, 'hex')
@@ -629,7 +623,9 @@ async function invokeOpenChannel(
  * Submit the settlement transaction to Stellar Testnet.
  *
  * Uses the contract address stored in the channel (from open_channel).
- * If no contract address in channel → return mock tx hash (demo mode).
+ * - If globalContractId is set and matches → real on-chain settlement
+ * - If no globalContractId (test mode) → mock settlement for testing
+ * - If mismatch → error (channel from different session)
  */
 async function submitSettlementTx(params: {
   channel: Channel
@@ -637,33 +633,49 @@ async function submitSettlementTx(params: {
   finalSig: Uint8Array | null
 }): Promise<string> {
   const contractId = params.channel.contractAddress
+
+  // Test mode: no global contract, use mock settlement
+  if (!globalContractId) {
+    console.log('[Pulsar] Test mode: using mock settlement (no globalContractId)')
+    const mockTxHash = Buffer.from(
+      `pulsar-settlement-${params.channel.id}-${Date.now()}`,
+    )
+      .toString('hex')
+      .slice(0, 64)
+      .padEnd(64, '0')
+    await sleep(100) // Simulate network latency
+    return mockTxHash
+  }
   
-  // Check if this looks like a real Stellar contract address (starts with C and 56 chars)
-  const isRealContract = contractId.startsWith('C') && contractId.length === 56 && 
-                         contractId !== params.channel.id // not a mock address
-  
-  if (isRealContract && globalContractId) {
-    // ── Real Soroban close_channel invocation ────────────────────────────────
-    try {
-      const serverKeypair = getServerKeypair()
-      const userKeypair = getUserKeypair()
-      const contract = new Contract(contractId)
+  // Production mode: verify contract matches global contract
+  if (contractId !== globalContractId) {
+    throw new Error(
+      `Cannot settle channel: contract address ${contractId} does not match global contract ${globalContractId}. ` +
+      'This channel may have been created in a previous session or with a different contract.'
+    )
+  }
 
-      // Build the correct signature for close_channel:
-      // Message = channel_id (32 bytes from contract address XDR) || amount (8 bytes big-endian)
-      const contractAddr = new Address(contractId)
-      const contractXdr = contractAddr.toScAddress().toXDR()
-      const channelIdBytes = contractXdr.slice(contractXdr.length - 32)
+  // ── Real Soroban close_channel invocation ────────────────────────────────
+  try {
+    const serverKeypair = getServerKeypair()
+    const userKeypair = getUserKeypair()
+    const contract = new Contract(contractId)
 
-      const amountBytes = Buffer.alloc(8)
-      amountBytes.writeBigUInt64BE(params.finalAmount)
-      const message = Buffer.concat([channelIdBytes, amountBytes])
+    // Build the correct signature for close_channel:
+    // Message = channel_id (32 bytes from contract address XDR) || amount (8 bytes big-endian)
+    const contractAddr = new Address(contractId)
+    const contractXdr = contractAddr.toScAddress().toXDR()
+    const channelIdBytes = contractXdr.slice(contractXdr.length - 32)
 
-      // Server signs the message (recipient in contract)
-      const signature = serverKeypair.sign(message)
+    const amountBytes = Buffer.alloc(8)
+    amountBytes.writeBigUInt64BE(params.finalAmount)
+    const message = Buffer.concat([channelIdBytes, amountBytes])
 
-      // Use user as source account (implicit auth for token operations)
-      const account = await sorobanRpc.getAccount(userKeypair.publicKey())
+    // Server signs the message (recipient in contract)
+    const signature = serverKeypair.sign(message)
+
+    // Use user as source account (implicit auth for token operations)
+    const account = await sorobanRpc.getAccount(userKeypair.publicKey())
 
       const tx = new TransactionBuilder(account, {
         fee: String(Number(BASE_FEE) * 10),
@@ -713,20 +725,6 @@ async function submitSettlementTx(params: {
         `Failed to invoke close_channel on Soroban contract: ${err instanceof Error ? err.message : String(err)}`,
       )
     }
-  }
-
-  // ── Demo mode: mock tx hash ───────────────────────────────────────────────
-  const mockTxHash = Buffer.from(
-    `pulsar-settlement-${params.channel.id}-${Date.now()}`,
-  )
-    .toString('hex')
-    .slice(0, 64)
-    .padEnd(64, '0')
-
-  // Simulate network latency
-  await sleep(500)
-
-  return mockTxHash
 }
 
 function sleep(ms: number): Promise<void> {

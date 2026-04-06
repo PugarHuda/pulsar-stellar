@@ -100,6 +100,8 @@ export function deserializeCommitmentBytes(bytes: Buffer): {
 /**
  * Build an unsigned open_channel transaction for wallet signing.
  * Returns the XDR and channel ID for the frontend to sign with Freighter.
+ * 
+ * Production mode: Deploys a fresh contract instance per channel.
  */
 export async function buildOpenChannelTx(
   req: OpenChannelRequest,
@@ -131,14 +133,14 @@ export async function buildOpenChannelTx(
   const channelId = uuidv4()
   const budgetBaseUnits = usdcToBaseUnits(budgetUsdc)
 
-  // Get global contract address
-  if (!globalContractId) {
-    throw new Error('No contract available. Please restart backend.')
-  }
+  // Deploy fresh contract for this channel
+  console.log(`[Pulsar] Deploying fresh contract for channel ${channelId}...`)
+  const contractAddress = await deployFreshContract()
+  console.log(`[Pulsar] ✓ Contract deployed: ${contractAddress}`)
 
   // Build unsigned transaction
   const { xdr } = await buildOpenChannelTransaction({
-    contractId: globalContractId,
+    contractId: contractAddress,
     userPublicKey,
     serverPublicKey: serverKeypair.publicKey(),
     budgetBaseUnits,
@@ -148,7 +150,7 @@ export async function buildOpenChannelTx(
   const now = Date.now()
   const channel: Channel = {
     id: channelId,
-    contractAddress: globalContractId,
+    contractAddress,
     userPublicKey,
     serverPublicKey: serverKeypair.publicKey(),
     budgetBaseUnits,
@@ -165,7 +167,7 @@ export async function buildOpenChannelTx(
   return {
     xdr,
     channelId,
-    contractAddress: globalContractId,
+    contractAddress,
   }
 }
 
@@ -489,12 +491,13 @@ export async function initializeGlobalContract(): Promise<void> {
 /**
  * Deploy a new one-way-channel Soroban contract instance and invoke open_channel.
  *
- * Architecture for hackathon demo:
- *   - Use globalContractId (deployed at startup) for all channels
- *   - This is pragmatic for demo: one contract, multiple channels
+ * Production architecture:
+ *   - Deploy a FRESH contract instance for EACH channel
+ *   - Each channel is completely isolated with its own contract
+ *   - Scalable and production-ready
  *   - In test mode (no CONTRACT_WASM_HASH): return mock contract for testing
  *
- * For production: each channel would get its own contract instance to avoid state conflicts.
+ * This ensures no conflicts between channels and allows unlimited concurrent channels.
  */
 async function deployChannelContract(params: {
   channelId: string
@@ -513,25 +516,21 @@ async function deployChannelContract(params: {
     return mockContractId
   }
 
-  // Production mode: use global contract
-  if (!globalContractId) {
-    throw new Error(
-      'No contract available. Please ensure CONTRACT_WASM_HASH is set and backend started successfully. ' +
-      'Check backend logs for contract deployment status.'
-    )
-  }
-
-  // Use the global contract for all channels (demo mode)
+  // Production mode: Deploy fresh contract per channel
+  console.log(`[Pulsar] Deploying fresh contract for channel ${params.channelId}...`)
+  
   try {
-    console.log(`[Pulsar] Using global contract ${globalContractId} for channel ${params.channelId}...`)
-    return await invokeOpenChannel(globalContractId, params)
+    const freshContractId = await deployFreshContract()
+    console.log(`[Pulsar] ✓ Fresh contract deployed: ${freshContractId}`)
+    
+    // Invoke open_channel on the fresh contract
+    return await invokeOpenChannel(freshContractId, params)
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err)
-    console.error(`[Pulsar] Failed to open channel on contract ${globalContractId}: ${errorMsg}`)
+    console.error(`[Pulsar] Failed to deploy/open channel: ${errorMsg}`)
     throw new Error(
       `Failed to open payment channel: ${errorMsg}. ` +
-      'This may be because the contract already has an open channel. ' +
-      'For demo purposes, please settle the existing channel first or restart the backend to deploy a fresh contract.'
+      'Please ensure your account is funded and try again.'
     )
   }
 }
@@ -654,8 +653,10 @@ export async function deployFreshContract(): Promise<string> {
 }
 
 /**
- * Build an unsigned open_channel transaction.
+ * Build an unsigned open_channel transaction for wallet signing.
  * Returns XDR for wallet signing.
+ * 
+ * Production mode: Deploys a fresh contract per channel for isolation.
  */
 async function buildOpenChannelTransaction(params: {
   contractId: string

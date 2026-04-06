@@ -392,10 +392,23 @@ Pulsar enforces 10 formal correctness properties validated via property-based te
 9. **Deterministic steps** — same task → same steps
 10. **Budget halt** — agent stops before exceeding budget
 
+### Run All Tests
 ```bash
 cd backend
 npm test
 ```
+
+### Test Real On-Chain Settlement
+```bash
+cd backend
+node test-real-settlement.mjs
+```
+
+This end-to-end test will:
+1. Open a payment channel (locks USDC in contract)
+2. Run a simple agent task (off-chain commitments)
+3. Settle the channel (real on-chain transaction)
+4. Verify USDC balances actually changed
 
 ## Tech Stack
 

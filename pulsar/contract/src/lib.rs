@@ -180,7 +180,7 @@ impl PulsarChannel {
 
         // Build the 40-byte message: channel_id (32 bytes) || amount (8 bytes)
         let mut msg = soroban_sdk::Bytes::new(&env);
-        msg.append(&channel_id.into());
+        msg.append(&channel_id.clone().into());
         msg.append(&soroban_sdk::Bytes::from_slice(&env, &amount_bytes));
 
         // Derive recipient's Ed25519 public key from their Stellar address
@@ -220,6 +220,104 @@ impl PulsarChannel {
         // Mark channel as closed
         state.status = ChannelStatus::Closed;
         env.storage().persistent().set(&CHANNEL_KEY, &state);
+
+        // Emit settlement event for indexing
+        env.events().publish(
+            (soroban_sdk::symbol_short!("settled"), channel_id),
+            (state.recipient.clone(), commitment_amount, refund),
+        );
+    }
+
+    /// Partially settle the channel by paying recipient a portion of the commitment,
+    /// while keeping the channel open for further use.
+    ///
+    /// This allows incremental payments without closing the channel, useful for
+    /// long-running agent tasks or subscription-like models.
+    ///
+    /// The signed message is:
+    ///   `channel_id (32 bytes) || partial_amount (8 bytes big-endian) || nonce (8 bytes big-endian)`
+    ///
+    /// # Arguments
+    /// * `partial_amount` — amount to pay recipient now (must be ≤ remaining amount)
+    /// * `nonce`          — monotonically increasing nonce to prevent replay attacks
+    /// * `signature`      — 64-byte Ed25519 signature from recipient's keypair
+    ///
+    /// # Panics
+    /// - If channel is not open
+    /// - If `partial_amount` exceeds remaining escrowed amount
+    /// - If signature verification fails
+    ///
+    /// Requirements: Partial settlement feature
+    pub fn partial_settle(
+        env: Env,
+        partial_amount: i128,
+        nonce: u64,
+        signature: BytesN<64>,
+    ) {
+        // Load channel state
+        let mut state: ChannelState = env
+            .storage()
+            .persistent()
+            .get(&CHANNEL_KEY)
+            .expect("channel not found");
+
+        // Ensure channel is still open
+        if state.status != ChannelStatus::Open {
+            panic!("channel already closed");
+        }
+
+        // Validate partial amount
+        if partial_amount <= 0 {
+            panic!("partial_amount must be positive");
+        }
+        if partial_amount > state.amount {
+            panic!("partial_amount exceeds remaining amount");
+        }
+
+        // ── Signature verification ──────────────────────────────────────────
+        // Message: channel_id (32 bytes) || partial_amount (8 bytes) || nonce (8 bytes)
+
+        let contract_addr_bytes = env.current_contract_address().to_xdr(&env);
+        let addr_len = contract_addr_bytes.len();
+        let channel_id: BytesN<32> = contract_addr_bytes
+            .slice(addr_len - 32..addr_len)
+            .try_into()
+            .expect("channel_id slice failed");
+
+        let amount_bytes = (partial_amount as u64).to_be_bytes();
+        let nonce_bytes = nonce.to_be_bytes();
+
+        let mut msg = soroban_sdk::Bytes::new(&env);
+        msg.append(&channel_id.clone().into());
+        msg.append(&soroban_sdk::Bytes::from_slice(&env, &amount_bytes));
+        msg.append(&soroban_sdk::Bytes::from_slice(&env, &nonce_bytes));
+
+        let recipient_xdr = state.recipient.clone().to_xdr(&env);
+        let xdr_len = recipient_xdr.len();
+        let recipient_pubkey: BytesN<32> = recipient_xdr
+            .slice(xdr_len - 32..xdr_len)
+            .try_into()
+            .expect("recipient pubkey slice failed");
+
+        env.crypto().ed25519_verify(&recipient_pubkey, &msg, &signature);
+
+        // ── Transfer partial amount ─────────────────────────────────────────
+        let token_client = token::Client::new(&env, &state.token);
+        token_client.transfer(
+            &env.current_contract_address(),
+            &state.recipient,
+            &partial_amount,
+        );
+
+        // Update remaining amount
+        state.amount -= partial_amount;
+        env.storage().persistent().set(&CHANNEL_KEY, &state);
+
+        // Emit partial settlement event
+        env.events().publish(
+            (soroban_sdk::symbol_short!("partial"), channel_id),
+            (state.recipient.clone(), partial_amount, state.amount),
+        );
     }
 
     /// Return the current channel state.
@@ -286,7 +384,7 @@ impl PulsarChannel {
 mod tests {
     use super::*;
     use soroban_sdk::{
-        testutils::Address as _,
+        testutils::{Address as _, Ledger},
         token::{Client as TokenClient, StellarAssetClient},
         Address, Env,
     };

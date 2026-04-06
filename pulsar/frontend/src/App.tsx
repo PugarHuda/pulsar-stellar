@@ -17,9 +17,18 @@ import { ChannelPanel } from './components/ChannelPanel'
 import { TaskPanel } from './components/TaskPanel'
 import { SettlementPanel } from './components/SettlementPanel'
 import { LandingPage } from './components/LandingPage'
+import { AnalyticsDashboard } from './components/AnalyticsDashboard'
+import { DarkModeToggle } from './components/DarkModeToggle'
+import { WalletConnect } from './components/WalletConnect'
+import { AgentMarketplace } from './components/AgentMarketplace'
+import { Navbar } from './components/Navbar'
+import { CostComparisonChart } from './components/CostComparisonChart'
+import { AgentNetworkVisualizer } from './components/AgentNetworkVisualizer'
+import { LiveTransactionFeed } from './components/LiveTransactionFeed'
 
 type AppStatus = 'idle' | 'channel_open' | 'task_running' | 'task_complete' | 'settled'
 type AppView = 'landing' | 'app'
+type AppTab = 'channels' | 'marketplace' | 'analytics'
 
 export interface SseEvent {
   type: string
@@ -29,6 +38,7 @@ export interface SseEvent {
 
 export default function App() {
   const [view, setView] = useState<AppView>('landing')
+  const [activeTab, setActiveTab] = useState<AppTab>('channels')
   const [channelId, setChannelId] = useState<string | null>(null)
   const [budgetUsdc, setBudgetUsdc] = useState<number>(0)
   const [appStatus, setAppStatus] = useState<AppStatus>('idle')
@@ -44,6 +54,13 @@ export default function App() {
 
   // Backend status (AI mode)
   const [aiMode, setAiMode] = useState<'openrouter' | 'claude' | 'mock' | null>(null)
+
+  // Wallet connection
+  const [walletPublicKey, setWalletPublicKey] = useState<string | null>(null)
+  const [walletToken, setWalletToken] = useState<string | null>(null)
+
+  // Agent selection
+  const [selectedAgentId, setSelectedAgentId] = useState<string>('general')
 
   // Fetch backend status on mount
   useEffect(() => {
@@ -93,6 +110,9 @@ export default function App() {
     setAppStatus('channel_open')
     setSseEvents([])
     setTotalChannelsOpened((n) => n + 1)
+    
+    // Log selected agent for this channel
+    console.log(`[Pulsar] Channel opened with agent type: ${selectedAgentId}`)
   }
 
   function handleTaskComplete(cost: number, remaining: number) {
@@ -116,7 +136,10 @@ export default function App() {
 
   // ── App view ──────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-gradient-to-br from-stellar-900 via-stellar-700 to-pulsar-accent relative">
+    <div className="min-h-screen bg-gradient-to-br from-stellar-900 via-stellar-700 to-pulsar-accent dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 relative">
+      {/* Dark mode toggle */}
+      <DarkModeToggle />
+      
       {/* Subtle background pattern */}
       <div
         className="absolute inset-0 opacity-5 pointer-events-none"
@@ -166,6 +189,18 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-4">
+          {/* Wallet connection */}
+          <WalletConnect
+            onConnect={(publicKey, token) => {
+              setWalletPublicKey(publicKey)
+              setWalletToken(token)
+            }}
+            onDisconnect={() => {
+              setWalletPublicKey(null)
+              setWalletToken(null)
+            }}
+          />
+
           {/* Session stats */}
           {(totalChannelsOpened > 0 || totalUsdcSpent > 0) && (
             <div className="hidden sm:flex items-center gap-3 text-xs text-white/60">
@@ -187,86 +222,177 @@ export default function App() {
         </div>
       </header>
 
+      {/* Navigation Tabs */}
+      <Navbar activeTab={activeTab} onTabChange={setActiveTab} />
+
       {/* Main content */}
-      <main className="relative z-10 max-w-6xl mx-auto px-4 pb-12">
-        {/* Hero subtitle */}
-        <div className="text-center mb-8 pt-2 animate-fade-in">
-          <p className="text-white/70 text-sm max-w-lg mx-auto">
-            Open a payment channel → run an AI agent task → settle with 1 on-chain transaction.
-            Each step signs an off-chain commitment. Zero gas per step.
-          </p>
-        </div>
+      <main className="relative z-10 max-w-6xl mx-auto px-4 pb-12 pt-8">
+        {/* Channels Tab */}
+        {activeTab === 'channels' && (
+          <>
+            {/* Hero subtitle */}
+            <div className="text-center mb-8 animate-fade-in">
+              <p className="text-white/70 text-sm max-w-lg mx-auto">
+                Open a payment channel → run an AI agent task → settle with 1 on-chain transaction.
+                Each step signs an off-chain commitment. Zero gas per step.
+              </p>
+            </div>
 
-        {/* Step indicator */}
-        <div className="flex items-center justify-center gap-2 mb-8">
-          {(['Open Channel', 'Run Agent', 'Settle'] as const).map((label, i) => (
-            <div key={label} className="flex items-center gap-2">
-              <div
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-300 ${
-                  i < currentPhase
-                    ? 'bg-white text-stellar-700 shadow-lg'
-                    : i === currentPhase
-                    ? 'bg-white/90 text-stellar-700 ring-2 ring-white/50 shadow-lg'
-                    : 'bg-white/20 text-white/60'
-                }`}
-              >
-                <span className={`w-4 h-4 rounded-full flex items-center justify-center text-xs font-bold ${
-                  i < currentPhase
-                    ? 'bg-green-500 text-white'
-                    : i === currentPhase
-                    ? 'bg-pulsar-accent text-white'
-                    : 'bg-white/20 text-white/60'
-                }`}>
-                  {i < currentPhase ? '✓' : i + 1}
-                </span>
-                <span>{label}</span>
+            {/* Step indicator */}
+            <div className="flex items-center justify-center gap-2 mb-8">
+              {(['Open Channel', 'Run Agent', 'Settle'] as const).map((label, i) => (
+                <div key={label} className="flex items-center gap-2">
+                  <div
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-300 ${
+                      i < currentPhase
+                        ? 'bg-white text-stellar-700 shadow-lg'
+                        : i === currentPhase
+                        ? 'bg-white/90 text-stellar-700 ring-2 ring-white/50 shadow-lg'
+                        : 'bg-white/20 text-white/60'
+                    }`}
+                  >
+                    <span className={`w-4 h-4 rounded-full flex items-center justify-center text-xs font-bold ${
+                      i < currentPhase
+                        ? 'bg-green-500 text-white'
+                        : i === currentPhase
+                        ? 'bg-pulsar-accent text-white'
+                        : 'bg-white/20 text-white/60'
+                    }`}>
+                      {i < currentPhase ? '✓' : i + 1}
+                    </span>
+                    <span>{label}</span>
+                  </div>
+                  {i < 2 && (
+                    <span className={`text-xs transition-colors ${i < currentPhase ? 'text-white/60' : 'text-white/20'}`}>
+                      →
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Panels — 3 columns on desktop, stacked on mobile */}
+            <div className="grid gap-5 grid-cols-1 lg:grid-cols-3 animate-slide-up">
+              <ChannelPanel 
+                onChannelOpened={handleChannelOpened} 
+                aiMode={aiMode}
+                walletPublicKey={walletPublicKey}
+                selectedAgentId={selectedAgentId}
+              />
+
+              <TaskPanel
+                channelId={channelId}
+                budgetUsdc={budgetUsdc}
+                onTaskComplete={handleTaskComplete}
+                sseEvents={sseEvents as unknown as Parameters<typeof TaskPanel>[0]['sseEvents']}
+                selectedAgentId={selectedAgentId}
+              />
+
+              <SettlementPanel
+                channelId={channelId}
+                totalCostUsdc={totalCostUsdc}
+                remainingBudgetUsdc={remainingBudgetUsdc}
+                taskComplete={appStatus === 'task_complete' || appStatus === 'settled'}
+              />
+            </div>
+
+            {/* How it works */}
+            <div className="mt-8 bg-white/10 backdrop-blur-sm rounded-2xl p-6 text-white/80 text-sm border border-white/10">
+              <h3 className="font-semibold text-white mb-3">How Pulsar works</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
+                <div>
+                  <p className="font-medium text-white mb-1">🔒 1. Open Channel</p>
+                  <p>Deploys a Soroban one-way-channel contract and locks your USDC budget.</p>
+                </div>
+                <div>
+                  <p className="font-medium text-white mb-1">🤖 2. Agent Runs</p>
+                  <p>Each step signs an off-chain commitment. No on-chain transaction per step.</p>
+                </div>
+                <div>
+                  <p className="font-medium text-white mb-1">✅ 3. Settle</p>
+                  <p>1 on-chain tx closes the channel. Server gets payment, you get refund.</p>
+                </div>
               </div>
-              {i < 2 && (
-                <span className={`text-xs transition-colors ${i < currentPhase ? 'text-white/60' : 'text-white/20'}`}>
-                  →
-                </span>
-              )}
             </div>
-          ))}
-        </div>
+          </>
+        )}
 
-        {/* Panels — 3 columns on desktop, stacked on mobile */}
-        <div className="grid gap-5 grid-cols-1 lg:grid-cols-3 animate-slide-up">
-          <ChannelPanel onChannelOpened={handleChannelOpened} aiMode={aiMode} />
-
-          <TaskPanel
-            channelId={channelId}
-            budgetUsdc={budgetUsdc}
-            onTaskComplete={handleTaskComplete}
-            sseEvents={sseEvents as unknown as Parameters<typeof TaskPanel>[0]['sseEvents']}
-          />
-
-          <SettlementPanel
-            channelId={channelId}
-            totalCostUsdc={totalCostUsdc}
-            remainingBudgetUsdc={remainingBudgetUsdc}
-            taskComplete={appStatus === 'task_complete' || appStatus === 'settled'}
-          />
-        </div>
-
-        {/* How it works */}
-        <div className="mt-8 bg-white/10 backdrop-blur-sm rounded-2xl p-6 text-white/80 text-sm border border-white/10">
-          <h3 className="font-semibold text-white mb-3">How Pulsar works</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
-            <div>
-              <p className="font-medium text-white mb-1">🔒 1. Open Channel</p>
-              <p>Deploys a Soroban one-way-channel contract and locks your USDC budget.</p>
+        {/* Marketplace Tab */}
+        {activeTab === 'marketplace' && (
+          <div className="animate-fade-in">
+            <div className="text-center mb-8">
+              <h2 className="text-white text-2xl font-bold mb-2">Agent Marketplace</h2>
+              <p className="text-white/70 text-sm max-w-lg mx-auto">
+                Choose from specialized AI agents with different capabilities and pricing.
+                Each agent is optimized for specific types of tasks.
+              </p>
             </div>
-            <div>
-              <p className="font-medium text-white mb-1">🤖 2. Agent Runs</p>
-              <p>Each step signs an off-chain commitment. No on-chain transaction per step.</p>
-            </div>
-            <div>
-              <p className="font-medium text-white mb-1">✅ 3. Settle</p>
-              <p>1 on-chain tx closes the channel. Server gets payment, you get refund.</p>
+            
+            <AgentMarketplace
+              onSelectAgent={setSelectedAgentId}
+              selectedAgentId={selectedAgentId}
+            />
+
+            {/* Marketplace info */}
+            <div className="mt-8 bg-white/10 backdrop-blur-sm rounded-2xl p-6 text-white/80 text-sm border border-white/10">
+              <h3 className="font-semibold text-white mb-3">💡 How Agent Pricing Works</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                <div>
+                  <p className="font-medium text-white mb-1">Per-Step Pricing</p>
+                  <p>Each agent charges per execution step. More complex agents cost more per step but deliver better results.</p>
+                </div>
+                <div>
+                  <p className="font-medium text-white mb-1">Off-Chain Commitments</p>
+                  <p>All payments are off-chain commitments until settlement. No gas fees per step!</p>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
+        )}
+
+        {/* Analytics Tab */}
+        {activeTab === 'analytics' && (
+          <div className="animate-fade-in space-y-6">
+            <div className="text-center mb-8">
+              <h2 className="text-white text-2xl font-bold mb-2">Platform Analytics</h2>
+              <p className="text-white/70 text-sm max-w-lg mx-auto">
+                Real-time metrics showing the power of MPP Session payment channels.
+                See how Pulsar reduces costs by 99% compared to traditional approaches.
+              </p>
+            </div>
+            
+            {/* Main Analytics Dashboard */}
+            <AnalyticsDashboard />
+
+            {/* Visual Comparisons Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <CostComparisonChart />
+              <AgentNetworkVisualizer />
+            </div>
+
+            {/* Live Transaction Feed */}
+            <LiveTransactionFeed />
+
+            {/* Analytics info */}
+            <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-6 text-white/80 text-sm border border-white/10">
+              <h3 className="font-semibold text-white mb-3">📈 Why These Metrics Matter</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
+                <div>
+                  <p className="font-medium text-white mb-1">Transaction Reduction</p>
+                  <p>Traditional: 100 steps = 100 txs. Pulsar: 100 steps = 1 tx. That's 99% fewer transactions!</p>
+                </div>
+                <div>
+                  <p className="font-medium text-white mb-1">Cost Savings</p>
+                  <p>Each Stellar transaction costs ~$0.01. With 100 steps, you save ~$0.99 per task.</p>
+                </div>
+                <div>
+                  <p className="font-medium text-white mb-1">Latency Improvement</p>
+                  <p>Off-chain commitments are instant. No waiting for blockchain confirmation per step.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   )

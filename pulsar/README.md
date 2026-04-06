@@ -6,6 +6,9 @@ Pulsar is an AI agent billing platform built on **MPP Session (payment channel)*
 Instead of paying per-request on-chain, Pulsar streams off-chain micropayments for every agent step,
 settling with a **single on-chain transaction** when the task is done.
 
+**🚀 Quick Start**: See [QUICK_START.md](QUICK_START.md) to get running in 5 minutes!  
+**📋 Submission**: See [READY_FOR_SUBMISSION.md](READY_FOR_SUBMISSION.md) for final status
+
 ## 🎯 Hackathon Submission
 
 **Innovation:** Pulsar is the first production-meaningful implementation of MPP Session (payment channel) mode on Stellar. While existing demos use x402 or MPP Charge (1 tx per request), Pulsar demonstrates the power of payment channels for high-frequency AI agent interactions.
@@ -13,11 +16,17 @@ settling with a **single on-chain transaction** when the task is done.
 **Why This Matters:** AI agents need to make dozens or hundreds of paid API calls per task. Traditional approaches create 100 on-chain transactions. Pulsar creates 100 off-chain commitments + 1 settlement tx, reducing costs and latency by 99%.
 
 **Technical Depth:**
-- ✅ Advanced Soroban features: persistent storage, SAC integration, Ed25519 verification, time-locks
+- ✅ Advanced Soroban features: persistent storage, SAC integration, Ed25519 verification, time-locks, events
 - ✅ Per-channel contract deployment for isolation
 - ✅ Real AI tools: DuckDuckGo search, VM2 code execution, public APIs (all free)
 - ✅ 106 backend tests + 7 Soroban tests with property-based testing
 - ✅ Real-time SSE streaming for live updates
+- ✅ SEP-10 Stellar Web Authentication
+- ✅ Agent Marketplace with multiple agent types
+- ✅ Partial settlement support (keep channel open)
+- ✅ Analytics dashboard with cost savings metrics
+- ✅ Dark mode support
+- ✅ PDF receipt export
 
 ## Why Pulsar?
 
@@ -31,6 +40,25 @@ Pulsar (session mode):       100 steps = 100 off-chain commitments + 1 settlemen
 
 This makes Pulsar ideal for AI agent billing where tasks involve dozens of LLM calls and tool calls.
 
+## ✨ Features
+
+### Core Features
+- **Payment Channels**: MPP Session implementation with off-chain commitments
+- **AI Agent Execution**: Real LLM calls, web search, code execution, data fetching
+- **Real-time Updates**: Server-Sent Events (SSE) for live task progress
+- **Automatic Settlement**: Single on-chain transaction when task completes
+- **Time-locked Refunds**: Expired channel recovery for safety
+
+### Advanced Features
+- **SEP-10 Authentication**: Stellar Web Authentication with challenge-response
+- **Freighter Wallet Integration**: Connect with Freighter browser extension
+- **Agent Marketplace**: Choose from multiple specialized agent types (Research, Coding, Analysis, General)
+- **Partial Settlement**: Pay incrementally while keeping channel open
+- **Analytics Dashboard**: Real-time metrics and cost savings visualization
+- **PDF Receipts**: Download detailed transaction receipts
+- **Dark Mode**: Full dark mode support across UI
+- **Multi-user Support**: JWT authentication for multiple users
+
 ## What's Real vs Simulated
 
 | Component | Demo Mode | Production Mode |
@@ -41,13 +69,17 @@ This makes Pulsar ideal for AI agent billing where tasks involve dozens of LLM c
 | Contract deployment | 🔵 Mock address | ✅ Real Soroban deploy per channel |
 | Open channel | 🔵 Mock address | ✅ Real Soroban `open_channel` |
 | Settlement tx | 🔵 Mock hash | ✅ Real Soroban `close_channel` |
+| Partial settlement | 🔵 Mock | ✅ Real Soroban `partial_settle` |
 | Expired refund | 🔵 Not available | ✅ Real Soroban `reclaim_expired` |
 | USDC transfer | 🔵 Simulated | ✅ Real on-chain transfer |
+| Soroban events | 🔵 Not emitted | ✅ Real events for indexing |
 | AI agent (llm_call) | 🔵 Mock descriptions | ✅ Real OpenRouter API (if key set) |
 | AI agent (reasoning) | 🔵 Mock descriptions | ✅ Real OpenRouter API (if key set) |
 | AI agent (web_search) | 🔵 Mock | ✅ Real DuckDuckGo API (free) |
 | AI agent (code_exec) | 🔵 Mock | ✅ Real VM2 sandbox (local) |
 | AI agent (data_fetch) | 🔵 Mock | ✅ Real public APIs (free) |
+| SEP-10 auth | ✅ Real | ✅ Real |
+| Wallet integration | ✅ Real Freighter | ✅ Real Freighter |
 
 ## Payment Protocol Comparison
 
@@ -69,6 +101,7 @@ This makes Pulsar ideal for AI agent billing where tasks involve dozens of LLM c
 | Contract deployment | Mock contract address (deterministic) | Real Soroban contract deployed per channel (fresh instance) |
 | Open Channel | Mock contract address | Real Soroban `open_channel()` call on fresh contract |
 | Settlement | Mock tx hash | Real Soroban `close_channel()` call on channel's contract |
+| Partial settlement | Mock | Real Soroban `partial_settle()` for incremental payments |
 | Expired refund | Not available | Real Soroban `reclaim_expired()` for time-locked safety |
 | USDC balance check | Skipped | Real Horizon balance check |
 | Testnet USDC needed | No | Yes |

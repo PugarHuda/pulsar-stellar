@@ -23,8 +23,129 @@ import { addClient } from './sse.js'
 import { PulsarError, PulsarErrorCode } from '../channel/types.js'
 import { formatErrorResponse } from '../channel/error-messages.js'
 import { baseUnitsToUsdc } from '../stellar/config.js'
+import { generateToken } from '../auth/jwt.js'
+import { authMiddleware, optionalAuthMiddleware } from '../auth/middleware.js'
+import { generateChallenge, verifyChallenge } from '../auth/sep10.js'
+import { listAgentTypes, getAgentType, recommendAgent } from '../agent/marketplace.js'
+import {
+  openAgentToAgentChannel,
+  callAgentService,
+  settleAgentToAgentChannel,
+  discoverAgentServices,
+  getAgentServices,
+  type AgentPaymentChannel,
+} from '../agent/agent-to-agent.js'
 
 export const router = Router()
+
+// In-memory store for agent-to-agent channels (demo purposes)
+const agentChannels = new Map<string, AgentPaymentChannel>()
+
+// ─── Authentication ───────────────────────────────────────────────────────────
+
+/**
+ * GET /api/auth/sep10/challenge
+ * 
+ * Generate a SEP-10 challenge transaction for Stellar Web Authentication.
+ * Client must sign this transaction and submit to /api/auth/sep10/token.
+ */
+router.get('/auth/sep10/challenge', (req, res) => {
+  const { account } = req.query
+
+  if (!account || typeof account !== 'string') {
+    return res.status(400).json({
+      error: {
+        code: 'INVALID_REQUEST',
+        message: 'account parameter is required',
+      },
+    })
+  }
+
+  try {
+    const challenge = generateChallenge(account)
+    res.json(challenge)
+  } catch (err) {
+    return res.status(400).json({
+      error: {
+        code: 'INVALID_REQUEST',
+        message: err instanceof Error ? err.message : 'Failed to generate challenge',
+      },
+    })
+  }
+})
+
+/**
+ * POST /api/auth/sep10/token
+ * 
+ * Verify a signed SEP-10 challenge transaction and issue JWT token.
+ */
+router.post('/auth/sep10/token', (req, res) => {
+  const { transaction } = req.body
+
+  if (!transaction || typeof transaction !== 'string') {
+    return res.status(400).json({
+      error: {
+        code: 'INVALID_REQUEST',
+        message: 'transaction parameter is required',
+      },
+    })
+  }
+
+  try {
+    const result = verifyChallenge(transaction)
+    res.json(result)
+  } catch (err) {
+    return res.status(401).json({
+      error: {
+        code: 'AUTHENTICATION_FAILED',
+        message: err instanceof Error ? err.message : 'Challenge verification failed',
+      },
+    })
+  }
+})
+
+/**
+ * POST /api/auth/login
+ * 
+ * Simple authentication - returns JWT token for a Stellar public key.
+ * In production, this would verify a signature challenge.
+ */
+router.post('/auth/login', (req, res) => {
+  const LoginSchema = z.object({
+    publicKey: z.string().regex(/^G[A-Z0-9]{55}$/, 'Invalid Stellar public key'),
+  })
+
+  const parsed = LoginSchema.safeParse(req.body)
+  if (!parsed.success) {
+    return res.status(400).json({
+      error: {
+        code: 'INVALID_REQUEST',
+        message: 'Invalid request data',
+        details: parsed.error.errors,
+      },
+    })
+  }
+
+  const { publicKey } = parsed.data
+  const token = generateToken(publicKey)
+
+  res.json({
+    token,
+    publicKey,
+    expiresIn: '24h',
+  })
+})
+
+/**
+ * GET /api/auth/me
+ * 
+ * Get current authenticated user info.
+ */
+router.get('/auth/me', authMiddleware, (req, res) => {
+  res.json({
+    publicKey: req.user!.publicKey,
+  })
+})
 
 // ─── Validation Schemas ───────────────────────────────────────────────────────
 
@@ -96,6 +217,314 @@ router.get('/analytics', (req, res) => {
       message: `${txReduction}% fewer transactions vs traditional pay-per-request`
     }
   })
+})
+
+/**
+ * GET /api/channels/:id/receipt
+ * 
+ * Download PDF receipt for a settled channel.
+ */
+router.get('/channels/:id/receipt', async (req, res) => {
+  const { id } = req.params
+  const channel = getChannel(id)
+
+  if (!channel) {
+    return res.status(404).json(formatErrorResponse(
+      PulsarErrorCode.CHANNEL_NOT_FOUND,
+      `Channel ${id} not found`,
+    ))
+  }
+
+  if (channel.status !== 'closed') {
+    return res.status(400).json({
+      error: {
+        code: 'CHANNEL_NOT_SETTLED',
+        message: 'Channel has not been settled yet',
+        action: 'Please settle the channel first',
+      },
+    })
+  }
+
+  try {
+    const PDFDocument = (await import('pdfkit')).default
+    const doc = new PDFDocument({ margin: 50 })
+
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', `attachment; filename=pulsar-receipt-${id}.pdf`)
+
+    doc.pipe(res)
+
+    // Header
+    doc.fontSize(24).font('Helvetica-Bold').text('Pulsar Receipt', { align: 'center' })
+    doc.moveDown(0.5)
+    doc.fontSize(10).font('Helvetica').fillColor('#666')
+      .text('AI Agent Billing on Stellar', { align: 'center' })
+    doc.moveDown(2)
+
+    // Channel Details
+    doc.fontSize(14).fillColor('#000').font('Helvetica-Bold').text('Channel Details')
+    doc.moveDown(0.5)
+    doc.fontSize(11).font('Helvetica')
+
+    const budgetUsdc = baseUnitsToUsdc(channel.budgetBaseUnits)
+    const paidUsdc = baseUnitsToUsdc(channel.currentCommitmentAmount)
+    const refundUsdc = budgetUsdc - paidUsdc
+
+    doc.text(`Channel ID: ${channel.id}`)
+    doc.text(`Contract Address: ${channel.contractAddress}`)
+    doc.text(`User: ${channel.userPublicKey}`)
+    doc.text(`Server: ${channel.serverPublicKey}`)
+    doc.moveDown()
+
+    // Financial Summary
+    doc.fontSize(14).font('Helvetica-Bold').text('Financial Summary')
+    doc.moveDown(0.5)
+    doc.fontSize(11).font('Helvetica')
+
+    doc.text(`Budget: ${budgetUsdc.toFixed(6)} USDC`)
+    doc.text(`Amount Paid: ${paidUsdc.toFixed(6)} USDC`)
+    doc.text(`Refund: ${refundUsdc.toFixed(6)} USDC`)
+    doc.text(`Steps Executed: ${channel.lastStepIndex + 1}`)
+    doc.moveDown()
+
+    // Transaction Details
+    doc.fontSize(14).font('Helvetica-Bold').text('Settlement Transaction')
+    doc.moveDown(0.5)
+    doc.fontSize(11).font('Helvetica')
+
+    doc.text(`TX Hash: ${channel.settlementTxHash}`)
+    doc.text(`Explorer: https://stellar.expert/explorer/testnet/tx/${channel.settlementTxHash}`, {
+      link: `https://stellar.expert/explorer/testnet/tx/${channel.settlementTxHash}`,
+      underline: true,
+    })
+    doc.moveDown()
+
+    // Timestamps
+    doc.fontSize(14).font('Helvetica-Bold').text('Timeline')
+    doc.moveDown(0.5)
+    doc.fontSize(11).font('Helvetica')
+
+    doc.text(`Opened: ${new Date(channel.createdAt).toLocaleString()}`)
+    doc.text(`Settled: ${new Date(channel.closedAt!).toLocaleString()}`)
+    doc.moveDown(2)
+
+    // Footer
+    doc.fontSize(9).fillColor('#999').text(
+      'This receipt was generated by Pulsar - AI Agent Billing on Stellar Testnet',
+      { align: 'center' }
+    )
+    doc.text(`Generated: ${new Date().toLocaleString()}`, { align: 'center' })
+
+    doc.end()
+  } catch (err) {
+    console.error('PDF generation failed:', err)
+    return res.status(500).json(formatErrorResponse(
+      PulsarErrorCode.INTERNAL_ERROR,
+      'Failed to generate PDF receipt',
+    ))
+  }
+})
+
+/**
+ * GET /api/agents
+ * 
+ * List all available agent types in the marketplace.
+ */
+router.get('/agents', (_req, res) => {
+  const agents = listAgentTypes()
+  res.json({ agents })
+})
+
+/**
+ * GET /api/agents/:id
+ * 
+ * Get details of a specific agent type.
+ */
+router.get('/agents/:id', (req, res) => {
+  const agent = getAgentType(req.params.id)
+  
+  if (!agent) {
+    return res.status(404).json({
+      error: {
+        code: 'AGENT_NOT_FOUND',
+        message: `Agent type '${req.params.id}' not found`,
+      },
+    })
+  }
+  
+  res.json(agent)
+})
+
+/**
+ * POST /api/agents/recommend
+ * 
+ * Get recommended agent type for a task description.
+ */
+router.post('/agents/recommend', (req, res) => {
+  const { taskDescription } = req.body
+  
+  if (!taskDescription || typeof taskDescription !== 'string') {
+    return res.status(400).json({
+      error: {
+        code: 'INVALID_REQUEST',
+        message: 'taskDescription is required',
+      },
+    })
+  }
+  
+  const agent = recommendAgent(taskDescription)
+  res.json(agent)
+})
+
+// ─── Agent-to-Agent Payments (KILLER FEATURE) ────────────────────────────────
+
+/**
+ * GET /api/agent-network/services
+ * 
+ * Discover all available agent services in the network.
+ * This enables agents to find and pay other agents for specialized services.
+ */
+router.get('/agent-network/services', (_req, res) => {
+  const services = discoverAgentServices()
+  res.json({ services })
+})
+
+/**
+ * GET /api/agent-network/agents/:agentId/services
+ * 
+ * Get services offered by a specific agent.
+ */
+router.get('/agent-network/agents/:agentId/services', (req, res) => {
+  const services = getAgentServices(req.params.agentId)
+  res.json({ services })
+})
+
+/**
+ * POST /api/agent-network/channels
+ * 
+ * Open a payment channel from one agent to another.
+ * Enables Agent A to pay Agent B for services.
+ */
+router.post('/agent-network/channels', async (req, res) => {
+  const { payerAgentId, recipientAgentId, budgetUsdc } = req.body
+  
+  if (!payerAgentId || !recipientAgentId || !budgetUsdc) {
+    return res.status(400).json({
+      error: {
+        code: 'INVALID_REQUEST',
+        message: 'payerAgentId, recipientAgentId, and budgetUsdc are required',
+      },
+    })
+  }
+  
+  try {
+    const channel = await openAgentToAgentChannel({
+      payerAgentId,
+      recipientAgentId,
+      budgetUsdc,
+    })
+    
+    agentChannels.set(channel.channelId, channel)
+    
+    res.status(201).json(channel)
+  } catch (err) {
+    return res.status(500).json({
+      error: {
+        code: 'CHANNEL_OPEN_FAILED',
+        message: err instanceof Error ? err.message : 'Failed to open agent channel',
+      },
+    })
+  }
+})
+
+/**
+ * POST /api/agent-network/channels/:channelId/call
+ * 
+ * Agent A calls Agent B's service through the payment channel.
+ * Payment is handled via off-chain commitment.
+ */
+router.post('/agent-network/channels/:channelId/call', async (req, res) => {
+  const { channelId } = req.params
+  const { serviceName, requestData } = req.body
+  
+  const channel = agentChannels.get(channelId)
+  if (!channel) {
+    return res.status(404).json({
+      error: {
+        code: 'CHANNEL_NOT_FOUND',
+        message: `Channel ${channelId} not found`,
+      },
+    })
+  }
+  
+  try {
+    const result = await callAgentService({
+      channel,
+      serviceName,
+      requestData,
+    })
+    
+    res.json(result)
+  } catch (err) {
+    return res.status(400).json({
+      error: {
+        code: 'SERVICE_CALL_FAILED',
+        message: err instanceof Error ? err.message : 'Failed to call service',
+      },
+    })
+  }
+})
+
+/**
+ * POST /api/agent-network/channels/:channelId/settle
+ * 
+ * Settle the agent-to-agent payment channel.
+ * Single on-chain transaction for all service calls.
+ */
+router.post('/agent-network/channels/:channelId/settle', async (req, res) => {
+  const { channelId } = req.params
+  
+  const channel = agentChannels.get(channelId)
+  if (!channel) {
+    return res.status(404).json({
+      error: {
+        code: 'CHANNEL_NOT_FOUND',
+        message: `Channel ${channelId} not found`,
+      },
+    })
+  }
+  
+  try {
+    const result = await settleAgentToAgentChannel(channel)
+    res.json(result)
+  } catch (err) {
+    return res.status(400).json({
+      error: {
+        code: 'SETTLEMENT_FAILED',
+        message: err instanceof Error ? err.message : 'Failed to settle channel',
+      },
+    })
+  }
+})
+
+/**
+ * GET /api/agent-network/channels/:channelId
+ * 
+ * Get agent-to-agent channel state.
+ */
+router.get('/agent-network/channels/:channelId', (req, res) => {
+  const channel = agentChannels.get(req.params.channelId)
+  
+  if (!channel) {
+    return res.status(404).json({
+      error: {
+        code: 'CHANNEL_NOT_FOUND',
+        message: `Channel ${req.params.channelId} not found`,
+      },
+    })
+  }
+  
+  res.json(channel)
 })
 
 /**

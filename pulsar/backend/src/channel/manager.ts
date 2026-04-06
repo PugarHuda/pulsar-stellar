@@ -98,7 +98,116 @@ export function deserializeCommitmentBytes(bytes: Buffer): {
 // ─── Open Channel ─────────────────────────────────────────────────────────────
 
 /**
- * Open a new payment channel.
+ * Build an unsigned open_channel transaction for wallet signing.
+ * Returns the XDR and channel ID for the frontend to sign with Freighter.
+ */
+export async function buildOpenChannelTx(
+  req: OpenChannelRequest,
+): Promise<{ xdr: string; channelId: string; contractAddress: string }> {
+  const { budgetUsdc, userPublicKey } = req
+
+  // Validate budget
+  if (budgetUsdc <= 0) {
+    throw new PulsarError(
+      PulsarErrorCode.CHANNEL_OPEN_FAILED,
+      'Budget must be greater than 0',
+    )
+  }
+
+  // Check USDC balance
+  const demoMode = process.env.DEMO_MODE === 'true'
+  if (!demoMode) {
+    const balanceStr = await getUsdcBalance(userPublicKey)
+    const balance = parseFloat(balanceStr)
+    if (balance < budgetUsdc) {
+      throw new PulsarError(
+        PulsarErrorCode.INSUFFICIENT_USDC_BALANCE,
+        `Insufficient USDC balance: have ${balance} USDC, need ${budgetUsdc} USDC`,
+      )
+    }
+  }
+
+  const serverKeypair = getServerKeypair()
+  const channelId = uuidv4()
+  const budgetBaseUnits = usdcToBaseUnits(budgetUsdc)
+
+  // Get global contract address
+  if (!globalContractId) {
+    throw new Error('No contract available. Please restart backend.')
+  }
+
+  // Build unsigned transaction
+  const { xdr } = await buildOpenChannelTransaction({
+    contractId: globalContractId,
+    userPublicKey,
+    serverPublicKey: serverKeypair.publicKey(),
+    budgetBaseUnits,
+  })
+
+  // Save channel in pending state
+  const now = Date.now()
+  const channel: Channel = {
+    id: channelId,
+    contractAddress: globalContractId,
+    userPublicKey,
+    serverPublicKey: serverKeypair.publicKey(),
+    budgetBaseUnits,
+    currentCommitmentAmount: 0n,
+    lastCommitmentSig: null,
+    lastStepIndex: -1,
+    status: 'pending' as any, // Pending wallet signature
+    createdAt: now,
+    updatedAt: now,
+  }
+
+  saveChannel(channel)
+
+  return {
+    xdr,
+    channelId,
+    contractAddress: globalContractId,
+  }
+}
+
+/**
+ * Submit a signed open_channel transaction.
+ * Called after user signs the transaction with their wallet.
+ */
+export async function submitOpenChannelTx(params: {
+  signedXdr: string
+  channelId: string
+}): Promise<OpenChannelResponse> {
+  const { signedXdr, channelId } = params
+
+  const channel = getChannel(channelId)
+  if (!channel) {
+    throw new PulsarError(
+      PulsarErrorCode.CHANNEL_NOT_FOUND,
+      `Channel ${channelId} not found`,
+    )
+  }
+
+  // Submit the signed transaction
+  const txHash = await submitSignedTransaction(signedXdr)
+
+  // Update channel status to open
+  updateChannel(channelId, {
+    status: 'open',
+    updatedAt: Date.now(),
+  })
+
+  console.log(`[Pulsar] Channel ${channelId} opened: https://stellar.expert/explorer/testnet/tx/${txHash}`)
+
+  return {
+    channelId,
+    contractAddress: channel.contractAddress,
+    budgetUsdc: baseUnitsToUsdc(channel.budgetBaseUnits),
+    status: 'open',
+  }
+}
+
+/**
+ * Open a new payment channel (legacy method - uses demo key).
  *
  * In demo mode: simulates the Soroban contract deployment by generating
  * a deterministic contract address. In production, this would invoke
@@ -542,6 +651,98 @@ export async function deployFreshContract(): Promise<string> {
     
     throw err
   }
+}
+
+/**
+ * Build an unsigned open_channel transaction.
+ * Returns XDR for wallet signing.
+ */
+async function buildOpenChannelTransaction(params: {
+  contractId: string
+  userPublicKey: string
+  serverPublicKey: string
+  budgetBaseUnits: bigint
+}): Promise<{ xdr: string }> {
+  const serverKeypair = getServerKeypair()
+  const contract = new Contract(params.contractId)
+
+  // Get user account for sequence number
+  const userAccount = await sorobanRpc.getAccount(params.userPublicKey)
+  const expiry = Math.floor(Date.now() / 1000) + 3600
+
+  const tx = new TransactionBuilder(userAccount, {
+    fee: String(Number(BASE_FEE) * 10),
+    networkPassphrase: NETWORK_PASSPHRASE,
+  })
+    .addOperation(
+      contract.call(
+        'open_channel',
+        nativeToScVal(params.userPublicKey, { type: 'address' }),
+        nativeToScVal(serverKeypair.publicKey(), { type: 'address' }),
+        nativeToScVal(USDC_SAC_ADDRESS, { type: 'address' }),
+        nativeToScVal(params.budgetBaseUnits, { type: 'i128' }),
+        xdr.ScVal.scvU64(xdr.Uint64.fromString(String(expiry))),
+      ),
+    )
+    .setTimeout(60)
+    .build()
+
+  // Simulate to get resource fees
+  const simResult = await sorobanRpc.simulateTransaction(tx)
+  if ('error' in simResult) {
+    throw new Error(`Soroban simulation failed: ${simResult.error}`)
+  }
+
+  // Prepare transaction (adds resource fees)
+  const preparedTx = await sorobanRpc.prepareTransaction(tx)
+
+  // Return unsigned XDR
+  return {
+    xdr: preparedTx.toXDR(),
+  }
+}
+
+/**
+ * Submit a signed transaction to the network.
+ */
+async function submitSignedTransaction(signedXdr: string): Promise<string> {
+  const tx = TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASE)
+
+  const sendResult = await sorobanRpc.sendTransaction(tx)
+  if (sendResult.status === 'ERROR') {
+    throw new Error(`sendTransaction failed: ${JSON.stringify(sendResult.errorResult)}`)
+  }
+
+  // Poll for confirmation
+  let getResult = await sorobanRpc.getTransaction(sendResult.hash)
+  let attempts = 0
+  while (getResult.status === 'NOT_FOUND' && attempts < 30) {
+    await sleep(1000)
+    getResult = await sorobanRpc.getTransaction(sendResult.hash)
+    attempts++
+  }
+
+  if (getResult.status !== 'SUCCESS') {
+    const resultMeta = getResult as { 
+      resultXdr?: string
+      resultMetaXdr?: string
+      status: string 
+    }
+    
+    let errorDetail = ''
+    try {
+      if (resultMeta.resultXdr) {
+        const result = xdr.TransactionResult.fromXDR(resultMeta.resultXdr, 'base64')
+        errorDetail = ` | Result: ${JSON.stringify(result)}`
+      }
+    } catch {
+      // Ignore XDR parsing errors
+    }
+    
+    throw new Error(`Transaction failed: ${getResult.status}${errorDetail}`)
+  }
+
+  return sendResult.hash
 }
 
 /**

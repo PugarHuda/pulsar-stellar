@@ -94,6 +94,80 @@ export function ChannelPanel({ onChannelOpened, aiMode, walletPublicKey, selecte
   }
 
   async function tryOpenChannel(retried = false): Promise<ChannelInfo> {
+    // Check if using wallet (not demo key)
+    const demoUserKey = 'GBUHNO53JCBELILRLNUGUR27G3TSL33M2TQIPEWS64HNEVBKR7RSRXFI'
+    const isUsingWallet = walletPublicKey && userPublicKey !== demoUserKey
+
+    if (isUsingWallet) {
+      // Wallet signing flow
+      return await openChannelWithWallet()
+    } else {
+      // Demo key flow (legacy)
+      return await openChannelWithDemoKey(retried)
+    }
+  }
+
+  async function openChannelWithWallet(): Promise<ChannelInfo> {
+    const { isConnected, signTransaction } = await import('@stellar/freighter-api')
+    
+    // Check if Freighter is installed
+    const connected = await isConnected()
+    if (!connected.isConnected) {
+      throw new Error('Freighter wallet not installed. Please install Freighter extension.')
+    }
+
+    setLoadingStep('Building transaction...')
+
+    // Step 1: Build unsigned transaction
+    const buildRes = await fetch('/api/channels/build-open-tx', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        budgetUsdc: parseFloat(budgetUsdc),
+        userPublicKey,
+      }),
+    })
+
+    const buildData = await buildRes.json()
+
+    if (!buildRes.ok) {
+      throw new Error(buildData.error?.message || buildData.error || 'Failed to build transaction')
+    }
+
+    setLoadingStep('Waiting for wallet signature...')
+
+    // Step 2: Sign with Freighter
+    const signResult = await signTransaction(buildData.xdr, {
+      networkPassphrase: 'Test SDF Network ; September 2015',
+      address: userPublicKey,
+    })
+
+    if (signResult.error) {
+      throw new Error(`Wallet signing failed: ${signResult.error}`)
+    }
+
+    setLoadingStep('Submitting transaction...')
+
+    // Step 3: Submit signed transaction
+    const submitRes = await fetch('/api/channels/submit-open-tx', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        signedXdr: signResult.signedTxXdr,
+        channelId: buildData.channelId,
+      }),
+    })
+
+    const submitData = await submitRes.json()
+
+    if (!submitRes.ok) {
+      throw new Error(submitData.error?.message || submitData.error || 'Failed to submit transaction')
+    }
+
+    return submitData as ChannelInfo
+  }
+
+  async function openChannelWithDemoKey(retried = false): Promise<ChannelInfo> {
     const res = await fetch('/api/channels', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -220,19 +294,13 @@ export function ChannelPanel({ onChannelOpened, aiMode, walletPublicKey, selecte
               )}
             </div>
             {walletPublicKey && (
-              <div className="mt-2 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-                <p className="text-xs text-yellow-800 font-medium mb-1">
-                  ⚠️ Wallet signing not yet implemented
-                </p>
-                <p className="text-xs text-yellow-700">
-                  For now, please disconnect your wallet and use the "Demo key" button to test the system.
-                  Full wallet integration coming soon!
-                </p>
-              </div>
+              <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
+                <span>✓</span> Using connected wallet (Freighter will prompt for signature)
+              </p>
             )}
             {!walletPublicKey && userPublicKey && (
-              <p className="text-xs text-green-600 mt-1">
-                ✓ Using demo account (funded with testnet USDC)
+              <p className="text-xs text-blue-600 mt-1">
+                Using demo account (funded with testnet USDC)
               </p>
             )}
           </div>

@@ -659,6 +659,56 @@ router.get('/status', (_req: Request, res: Response) => {
 })
 
 /**
+ * POST /api/channels/build-open-tx
+ * Build an unsigned open_channel transaction for wallet signing.
+ * 
+ * Body: { budgetUsdc: number, userPublicKey: string }
+ * Response: { xdr: string, channelId: string }
+ */
+router.post('/channels/build-open-tx', async (req: Request, res: Response) => {
+  const parsed = OpenChannelSchema.safeParse(req.body)
+  if (!parsed.success) {
+    return res.status(400).json({
+      error: 'Validation failed',
+      details: parsed.error.flatten().fieldErrors,
+    })
+  }
+
+  try {
+    const { buildOpenChannelTx } = await import('../channel/manager.js')
+    const result = await buildOpenChannelTx(parsed.data)
+    return res.status(200).json(result)
+  } catch (err) {
+    return handleError(err, res)
+  }
+})
+
+/**
+ * POST /api/channels/submit-open-tx
+ * Submit a signed open_channel transaction.
+ * 
+ * Body: { signedXdr: string, channelId: string }
+ * Response: { channelId, contractAddress, budgetUsdc, status }
+ */
+router.post('/channels/submit-open-tx', async (req: Request, res: Response) => {
+  const { signedXdr, channelId } = req.body
+  
+  if (!signedXdr || !channelId) {
+    return res.status(400).json({
+      error: 'signedXdr and channelId are required',
+    })
+  }
+
+  try {
+    const { submitOpenChannelTx } = await import('../channel/manager.js')
+    const result = await submitOpenChannelTx({ signedXdr, channelId })
+    return res.status(201).json(result)
+  } catch (err) {
+    return handleError(err, res)
+  }
+})
+
+/**
  * POST /api/channels
  * Open a new payment channel with USDC deposit.
  *

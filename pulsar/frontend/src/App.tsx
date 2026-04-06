@@ -23,8 +23,6 @@ import { WalletConnect } from './components/WalletConnect'
 import { AgentMarketplace } from './components/AgentMarketplace'
 import { Navbar } from './components/Navbar'
 import { CostComparisonChart } from './components/CostComparisonChart'
-import { AgentNetworkVisualizer } from './components/AgentNetworkVisualizer'
-import { LiveTransactionFeed } from './components/LiveTransactionFeed'
 
 type AppStatus = 'idle' | 'channel_open' | 'task_running' | 'task_complete' | 'settled'
 type AppView = 'landing' | 'app'
@@ -361,17 +359,13 @@ export default function App() {
               </p>
             </div>
             
-            {/* Main Analytics Dashboard */}
+            {/* Main Analytics Dashboard - REAL DATA */}
             <AnalyticsDashboard />
 
-            {/* Visual Comparisons Grid */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Cost Comparison Chart - REAL CALCULATION */}
+            <div className="grid grid-cols-1 gap-6">
               <CostComparisonChart />
-              <AgentNetworkVisualizer />
             </div>
-
-            {/* Live Transaction Feed */}
-            <LiveTransactionFeed />
 
             {/* Analytics info */}
             <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-6 text-white/80 text-sm border border-white/10">

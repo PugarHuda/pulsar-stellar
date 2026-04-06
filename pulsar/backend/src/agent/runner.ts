@@ -40,6 +40,7 @@ import {
 export interface RunAgentParams {
   channelId: string
   taskDescription: string
+  agentId?: string  // Agent type: 'general', 'research', 'code', 'data'
   /** Optional sleep override — used in tests to skip artificial delays */
   _sleepFn?: (ms: number) => Promise<void>
 }
@@ -50,6 +51,23 @@ export interface RunAgentResult {
   totalCostUsdc: number
   remainingBudgetUsdc: number
   completedNormally: boolean  // false if budget exhausted
+}
+
+// ─── Agent Pricing ────────────────────────────────────────────────────────────
+
+/**
+ * Get cost per step based on agent type.
+ * Different agents have different capabilities and pricing.
+ */
+function getAgentPricing(agentId?: string): number {
+  const pricing: Record<string, number> = {
+    'general': 0.04,    // $0.04 per step - balanced
+    'research': 0.06,   // $0.06 per step - more web searches
+    'code': 0.05,       // $0.05 per step - code execution
+    'data': 0.07,       // $0.07 per step - data analysis
+  }
+  
+  return pricing[agentId || 'general'] || 0.04
 }
 
 // ─── Runner ───────────────────────────────────────────────────────────────────
@@ -67,7 +85,7 @@ export interface RunAgentResult {
  * Returns task summary when done.
  */
 export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> {
-  const { channelId, taskDescription, _sleepFn } = params
+  const { channelId, taskDescription, agentId, _sleepFn } = params
   const sleepImpl = _sleepFn ?? sleep
 
   const channel = getChannel(channelId)
@@ -91,6 +109,10 @@ export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> 
   const steps = generateTaskSteps(taskDescription)
   const budgetUsdc = baseUnitsToUsdc(channel.budgetBaseUnits)
   const useRealLlm = isLLMAvailable()
+  
+  // Get agent-specific pricing
+  const costPerStepUsdc = getAgentPricing(agentId)
+  console.log(`[Pulsar] Running agent '${agentId || 'general'}' with pricing $${costPerStepUsdc}/step`)
 
   let completedSteps = 0
   let cumulativeCostUsdc = 0

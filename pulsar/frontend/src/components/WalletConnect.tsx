@@ -1,12 +1,13 @@
 /**
  * WalletConnect.tsx
  * 
- * Freighter wallet integration for Stellar authentication.
- * Supports SEP-10 challenge-response authentication.
- * Falls back to demo mode if Freighter is not installed.
+ * Freighter wallet integration using official @stellar/freighter-api
+ * Supports SEP-10 challenge-response authentication
+ * Falls back to demo mode if Freighter is not installed
  */
 
 import { useState, useEffect } from 'react'
+import { isConnected, requestAccess, getAddress } from '@stellar/freighter-api'
 
 interface WalletConnectProps {
   onConnect: (publicKey: string, token: string) => void
@@ -22,30 +23,19 @@ export function WalletConnect({ onConnect, onDisconnect }: WalletConnectProps) {
   const [demoPublicKey, setDemoPublicKey] = useState('')
   const [freighterAvailable, setFreighterAvailable] = useState(false)
 
-  // Check if Freighter is installed
-  const checkFreighter = () => {
-    return typeof window !== 'undefined' && 'freighter' in window
-  }
-
-  // Wait for Freighter to be injected
+  // Check if Freighter is installed on mount
   useEffect(() => {
-    let attempts = 0
-    const maxAttempts = 10
-    
-    const checkInterval = setInterval(() => {
-      attempts++
-      
-      if (checkFreighter()) {
-        setFreighterAvailable(true)
-        clearInterval(checkInterval)
-      } else if (attempts >= maxAttempts) {
-        setFreighterAvailable(false)
-        clearInterval(checkInterval)
-      }
-    }, 100)
-
-    return () => clearInterval(checkInterval)
+    checkFreighterInstalled()
   }, [])
+
+  async function checkFreighterInstalled() {
+    try {
+      const result = await isConnected()
+      setFreighterAvailable(result.isConnected)
+    } catch (err) {
+      setFreighterAvailable(false)
+    }
+  }
 
   // Check if already connected on mount
   useEffect(() => {
@@ -60,19 +50,31 @@ export function WalletConnect({ onConnect, onDisconnect }: WalletConnectProps) {
   }, [onConnect])
 
   async function connectWallet() {
-    if (!checkFreighter()) {
-      setError('Freighter wallet not detected')
-      setShowDemoInput(true)
-      return
-    }
-
     setLoading(true)
     setError(null)
 
     try {
-      // Request public key from Freighter
-      const result = await (window as any).freighter.getPublicKey()
-      const userPublicKey = result.publicKey || result
+      // Check if Freighter is installed
+      const connectionCheck = await isConnected()
+      if (!connectionCheck.isConnected) {
+        setError('Freighter wallet not installed')
+        setShowDemoInput(true)
+        setLoading(false)
+        return
+      }
+
+      // Request access to user's public key
+      const accessResult = await requestAccess()
+      
+      if (accessResult.error) {
+        throw new Error(accessResult.error)
+      }
+
+      const userPublicKey = accessResult.address
+      
+      if (!userPublicKey) {
+        throw new Error('Failed to get public key from Freighter')
+      }
       
       // Get SEP-10 challenge from backend
       const challengeRes = await fetch(`/api/auth/sep10/challenge?account=${userPublicKey}`)
@@ -83,11 +85,17 @@ export function WalletConnect({ onConnect, onDisconnect }: WalletConnectProps) {
       const { transaction: challengeXdr } = await challengeRes.json()
       
       // Sign challenge with Freighter
-      const signResult = await (window as any).freighter.signTransaction(
-        challengeXdr,
-        { networkPassphrase: 'Test SDF Network ; September 2015' }
-      )
-      const signedTxXdr = signResult.signedTxXdr || signResult
+      const { signTransaction } = await import('@stellar/freighter-api')
+      const signResult = await signTransaction(challengeXdr, {
+        networkPassphrase: 'Test SDF Network ; September 2015',
+        address: userPublicKey
+      })
+      
+      if (signResult.error) {
+        throw new Error(signResult.error)
+      }
+
+      const signedTxXdr = signResult.signedTxXdr
       
       // Submit signed challenge to get JWT token
       const tokenRes = await fetch('/api/auth/sep10/token', {

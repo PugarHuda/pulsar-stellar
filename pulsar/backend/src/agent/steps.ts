@@ -83,8 +83,11 @@ const STEP_TEMPLATES: StepTemplate[] = [
  * Determinism: same taskDescription always produces same steps (Req 3.3, P9).
  * Step count: 5-10 based on task complexity (hash of description).
  * Minimum 5 steps per task (Req 3.1).
+ * 
+ * @param taskDescription - The task to generate steps for
+ * @param costMultiplier - Multiplier for step costs based on agent type (default 1.0)
  */
-export function generateTaskSteps(taskDescription: string): AgentStep[] {
+export function generateTaskSteps(taskDescription: string, costMultiplier: number = 1.0): AgentStep[] {
   // Deterministic step count: 5-10 based on task hash
   const hash = simpleHash(taskDescription)
   const stepCount = 5 + (hash % 6) // 5, 6, 7, 8, 9, or 10
@@ -95,7 +98,8 @@ export function generateTaskSteps(taskDescription: string): AgentStep[] {
 
   for (let i = 0; i < templates.length; i++) {
     const template = templates[i]
-    const cost = STEP_COSTS[template.type]
+    const baseCost = STEP_COSTS[template.type]
+    const cost = Math.round(baseCost * costMultiplier * 100) / 100 // Apply multiplier and round to 2 decimals
     cumulativeCost = Math.round((cumulativeCost + cost) * 10_000_000) / 10_000_000
 
     steps.push({

@@ -9,11 +9,13 @@
  * - USDC balance check status indicator
  * - Spinner animation during loading
  * - "Demo key" quick-fill from /api/status
+ * - Auto-fills public key from connected wallet
+ * - Shows selected agent type
  *
  * Context: See frontend/CONTEXT.md
  */
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 interface ChannelInfo {
   channelId: string
@@ -25,9 +27,11 @@ interface ChannelInfo {
 interface ChannelPanelProps {
   onChannelOpened: (channelId: string, budgetUsdc: number) => void
   aiMode?: 'openrouter' | 'claude' | 'mock' | null
+  walletPublicKey?: string | null
+  selectedAgentId?: string
 }
 
-export function ChannelPanel({ onChannelOpened, aiMode }: ChannelPanelProps) {
+export function ChannelPanel({ onChannelOpened, aiMode, walletPublicKey, selectedAgentId }: ChannelPanelProps) {
   const [budgetUsdc, setBudgetUsdc] = useState<string>('10')
   const [userPublicKey, setUserPublicKey] = useState<string>('')
   const [loading, setLoading] = useState(false)
@@ -36,6 +40,13 @@ export function ChannelPanel({ onChannelOpened, aiMode }: ChannelPanelProps) {
   const [copiedChannelId, setCopiedChannelId] = useState(false)
   const [balanceStatus, setBalanceStatus] = useState<'idle' | 'checking' | 'ok' | 'error'>('idle')
   const [demoKeyLoading, setDemoKeyLoading] = useState(false)
+
+  // Auto-fill wallet public key when wallet connects
+  useEffect(() => {
+    if (walletPublicKey && !userPublicKey) {
+      setUserPublicKey(walletPublicKey)
+    }
+  }, [walletPublicKey, userPublicKey])
 
   async function handleUseDemoKey() {
     setDemoKeyLoading(true)
@@ -149,6 +160,9 @@ export function ChannelPanel({ onChannelOpened, aiMode }: ChannelPanelProps) {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Your Stellar Public Key (G...)
+              {walletPublicKey && (
+                <span className="ml-2 text-xs text-green-600">✓ From wallet</span>
+              )}
             </label>
             <div className="flex gap-2">
               <input
@@ -157,18 +171,40 @@ export function ChannelPanel({ onChannelOpened, aiMode }: ChannelPanelProps) {
                 onChange={(e) => setUserPublicKey(e.target.value)}
                 className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-stellar-500 focus:border-transparent outline-none text-gray-900 font-mono text-sm"
                 placeholder="GABC...XYZ"
+                disabled={!!walletPublicKey}
               />
-              <button
-                type="button"
-                onClick={handleUseDemoKey}
-                disabled={demoKeyLoading}
-                className="px-3 py-2.5 text-xs font-medium text-stellar-600 border border-stellar-300 rounded-lg hover:bg-stellar-50 disabled:opacity-50 transition-colors shrink-0"
-                title="Fill in the demo user public key from backend config"
-              >
-                {demoKeyLoading ? '...' : 'Demo key'}
-              </button>
+              {!walletPublicKey && (
+                <button
+                  type="button"
+                  onClick={handleUseDemoKey}
+                  disabled={demoKeyLoading}
+                  className="px-3 py-2.5 text-xs font-medium text-stellar-600 border border-stellar-300 rounded-lg hover:bg-stellar-50 disabled:opacity-50 transition-colors shrink-0"
+                  title="Fill in the demo user public key from backend config"
+                >
+                  {demoKeyLoading ? '...' : 'Demo key'}
+                </button>
+              )}
             </div>
+            {walletPublicKey && (
+              <p className="text-xs text-gray-500 mt-1">
+                Using connected wallet address
+              </p>
+            )}
           </div>
+
+          {/* Selected Agent Info */}
+          {selectedAgentId && selectedAgentId !== 'general' && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3">
+              <div className="flex items-center gap-2">
+                <span className="text-blue-600 text-sm font-medium">
+                  Selected Agent: {selectedAgentId.charAt(0).toUpperCase() + selectedAgentId.slice(1)}
+                </span>
+              </div>
+              <p className="text-xs text-blue-600 mt-1">
+                This agent will be used for your task execution
+              </p>
+            </div>
+          )}
 
           {/* Balance check status */}
           {balanceStatus !== 'idle' && (

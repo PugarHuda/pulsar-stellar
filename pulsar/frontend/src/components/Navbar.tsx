@@ -5,12 +5,13 @@
  */
 
 interface NavbarProps {
-  activeTab: 'channels' | 'marketplace' | 'analytics'
-  onTabChange: (tab: 'channels' | 'marketplace' | 'analytics') => void
+  activeTab: 'channels' | 'marketplace' | 'analytics' | 'prediction'
+  onTabChange: (tab: 'channels' | 'marketplace' | 'analytics' | 'prediction') => void
 }
 
 export function Navbar({ activeTab, onTabChange }: NavbarProps) {
   const tabs = [
+    { id: 'prediction' as const, label: 'Cost Prediction', icon: '🔮' },
     { id: 'channels' as const, label: 'Payment Channels', icon: '⚡' },
     { id: 'marketplace' as const, label: 'Agent Marketplace', icon: '🤖' },
     { id: 'analytics' as const, label: 'Analytics', icon: '📊' },

@@ -34,7 +34,7 @@ export function AnalyticsDashboard() {
 
   async function fetchAnalytics() {
     try {
-      const res = await fetch('http://localhost:3001/api/analytics')
+      const res = await fetch('/api/analytics')  // Fixed: use relative URL
       const data = await res.json()
       setAnalytics(data)
     } catch (err) {

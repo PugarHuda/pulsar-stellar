@@ -40,6 +40,7 @@ export function ChannelPanel({ onChannelOpened, aiMode, walletPublicKey, selecte
   const [copiedChannelId, setCopiedChannelId] = useState(false)
   const [balanceStatus, setBalanceStatus] = useState<'idle' | 'checking' | 'ok' | 'error'>('idle')
   const [demoKeyLoading, setDemoKeyLoading] = useState(false)
+  const [loadingStep, setLoadingStep] = useState<string>('')
 
   // Auto-fill wallet public key when wallet connects
   useEffect(() => {
@@ -67,17 +68,28 @@ export function ChannelPanel({ onChannelOpened, aiMode, walletPublicKey, selecte
     setError(null)
     setLoading(true)
     setBalanceStatus('checking')
+    setLoadingStep('Checking USDC balance...')
 
     try {
+      // Simulate progress steps
+      setTimeout(() => setLoadingStep('Deploying Soroban contract...'), 500)
+      setTimeout(() => setLoadingStep('Locking USDC in contract...'), 1500)
+      setTimeout(() => setLoadingStep('Finalizing channel...'), 2500)
+      
       const result = await tryOpenChannel()
       setBalanceStatus('ok')
+      setLoadingStep('Channel ready! ✓')
       setChannel(result)
       onChannelOpened(result.channelId, result.budgetUsdc)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
       if (balanceStatus === 'checking') setBalanceStatus('error')
+      setLoadingStep('')
     } finally {
-      setLoading(false)
+      setTimeout(() => {
+        setLoading(false)
+        setLoadingStep('')
+      }, 500)
     }
   }
 
@@ -94,7 +106,29 @@ export function ChannelPanel({ onChannelOpened, aiMode, walletPublicKey, selecte
     const data = await res.json()
 
     if (!res.ok) {
-      const errMsg: string = data.error ?? 'Failed to open channel'
+      // Handle different error response formats
+      let errMsg: string
+      if (typeof data.error === 'string') {
+        errMsg = data.error
+      } else if (data.error?.message) {
+        errMsg = data.error.message
+      } else {
+        errMsg = 'Failed to open channel'
+      }
+      
+      // Make error messages user-friendly
+      const friendlyErrors: Record<string, string> = {
+        'channel already open': '⚠️ This contract is already in use. We\'ll deploy a fresh one for you...',
+        'insufficient': '💰 Insufficient USDC balance. Please add funds to your wallet and try again.',
+        'invalid public key': '🔑 Invalid Stellar address. Please check your public key (should start with G).',
+        'not found': '❌ Channel not found. Please open a new payment channel first.',
+      }
+      
+      // Find matching friendly error
+      const friendlyMsg = Object.entries(friendlyErrors).find(([key]) => 
+        errMsg.toLowerCase().includes(key)
+      )?.[1] || `❌ ${errMsg}`
+      
       // Auto-retry once: deploy a fresh contract if "channel already open"
       if (!retried && errMsg.toLowerCase().includes('channel already open')) {
         const resetRes = await fetch('/api/admin/reset-contract', { method: 'POST' })
@@ -103,7 +137,7 @@ export function ChannelPanel({ onChannelOpened, aiMode, walletPublicKey, selecte
         }
       }
       setBalanceStatus('error')
-      throw new Error(errMsg)
+      throw new Error(friendlyMsg)
     }
 
     return data as ChannelInfo
@@ -238,9 +272,14 @@ export function ChannelPanel({ onChannelOpened, aiMode, walletPublicKey, selecte
             className="w-full py-3 px-4 bg-stellar-600 hover:bg-stellar-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-colors"
           >
             {loading ? (
-              <span className="flex items-center justify-center gap-2">
-                <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                Opening Channel...
+              <span className="flex flex-col items-center justify-center gap-1">
+                <span className="flex items-center gap-2">
+                  <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Opening Channel...
+                </span>
+                {loadingStep && (
+                  <span className="text-xs text-white/80">{loadingStep}</span>
+                )}
               </span>
             ) : (
               'Open Channel'

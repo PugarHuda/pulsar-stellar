@@ -35,6 +35,17 @@ import {
   getAgentServices,
   type AgentPaymentChannel,
 } from '../agent/agent-to-agent.js'
+import {
+  getAgentReputation,
+  getAllReputations,
+  getTopAgents,
+  getReputationSummary,
+  updateAgentReputation,
+} from '../agent/reputation.js'
+import {
+  predictTaskCost,
+  getCostPredictionSummary,
+} from '../agent/cost-prediction.js'
 
 export const router = Router()
 
@@ -161,6 +172,9 @@ const RunTaskSchema = z.object({
     .string()
     .min(3, 'Task description must be at least 3 characters')
     .max(500, 'Task description too long'),
+  agentId: z
+    .string()
+    .optional(),
 })
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
@@ -376,6 +390,95 @@ router.post('/agents/recommend', (req, res) => {
   res.json(agent)
 })
 
+// ─── Agent Reputation System (KILLER FEATURE) ─────────────────────────────────
+
+/**
+ * GET /api/agents/:id/reputation
+ * 
+ * Get reputation score and stats for an agent.
+ * Shows success rate, total tasks, earnings, and badge.
+ */
+router.get('/agents/:id/reputation', (req, res) => {
+  const reputation = getAgentReputation(req.params.id)
+  const summary = getReputationSummary(req.params.id)
+  
+  res.json({
+    ...reputation,
+    summary,
+  })
+})
+
+/**
+ * GET /api/reputation/leaderboard
+ * 
+ * Get top agents by success rate.
+ * Minimum 5 tasks required to appear on leaderboard.
+ */
+router.get('/reputation/leaderboard', (req, res) => {
+  const limit = parseInt(req.query.limit as string) || 10
+  const topAgents = getTopAgents(limit)
+  
+  res.json({
+    leaderboard: topAgents.map(rep => ({
+      ...rep,
+      summary: getReputationSummary(rep.agentId),
+    })),
+  })
+})
+
+/**
+ * GET /api/reputation/all
+ * 
+ * Get all agent reputations.
+ */
+router.get('/reputation/all', (_req, res) => {
+  const all = getAllReputations()
+  res.json({
+    reputations: all.map(rep => ({
+      ...rep,
+      summary: getReputationSummary(rep.agentId),
+    })),
+  })
+})
+
+// ─── AI Cost Prediction (KILLER FEATURE) ──────────────────────────────────────
+
+/**
+ * POST /api/predict-cost
+ * 
+ * Predict task cost before opening channel.
+ * Uses AI to analyze task complexity and recommend optimal setup.
+ */
+router.post('/predict-cost', async (req, res) => {
+  const { taskDescription } = req.body
+  
+  if (!taskDescription || typeof taskDescription !== 'string') {
+    return res.status(400).json({
+      error: {
+        code: 'INVALID_REQUEST',
+        message: 'taskDescription is required',
+      },
+    })
+  }
+  
+  try {
+    const prediction = await predictTaskCost(taskDescription)
+    const summary = getCostPredictionSummary(prediction)
+    
+    res.json({
+      ...prediction,
+      summary,
+    })
+  } catch (err) {
+    return res.status(500).json({
+      error: {
+        code: 'PREDICTION_FAILED',
+        message: err instanceof Error ? err.message : 'Failed to predict cost',
+      },
+    })
+  }
+})
+
 // ─── Agent-to-Agent Payments (KILLER FEATURE) ────────────────────────────────
 
 /**
@@ -403,16 +506,16 @@ router.get('/agent-network/agents/:agentId/services', (req, res) => {
  * POST /api/agent-network/channels
  * 
  * Open a payment channel from one agent to another.
- * Enables Agent A to pay Agent B for services.
+ * Uses REAL Soroban contract deployment.
  */
 router.post('/agent-network/channels', async (req, res) => {
-  const { payerAgentId, recipientAgentId, budgetUsdc } = req.body
+  const { payerAgentId, recipientAgentId, budgetUsdc, payerPublicKey, recipientPublicKey } = req.body
   
-  if (!payerAgentId || !recipientAgentId || !budgetUsdc) {
+  if (!payerAgentId || !recipientAgentId || !budgetUsdc || !payerPublicKey || !recipientPublicKey) {
     return res.status(400).json({
       error: {
         code: 'INVALID_REQUEST',
-        message: 'payerAgentId, recipientAgentId, and budgetUsdc are required',
+        message: 'payerAgentId, recipientAgentId, budgetUsdc, payerPublicKey, and recipientPublicKey are required',
       },
     })
   }
@@ -422,6 +525,8 @@ router.post('/agent-network/channels', async (req, res) => {
       payerAgentId,
       recipientAgentId,
       budgetUsdc,
+      payerPublicKey,
+      recipientPublicKey,
     })
     
     agentChannels.set(channel.channelId, channel)
@@ -635,6 +740,7 @@ router.post('/channels/:id/run', async (req: Request, res: Response) => {
     const result = await runAgent({
       channelId: id,
       taskDescription: parsed.data.taskDescription,
+      agentId: parsed.data.agentId,
     })
     return res.json(result)
   } catch (err) {

@@ -23,10 +23,11 @@ import { WalletConnect } from './components/WalletConnect'
 import { AgentMarketplace } from './components/AgentMarketplace'
 import { Navbar } from './components/Navbar'
 import { CostComparisonChart } from './components/CostComparisonChart'
+import CostPredictionPanel from './components/CostPredictionPanel'
 
 type AppStatus = 'idle' | 'channel_open' | 'task_running' | 'task_complete' | 'settled'
 type AppView = 'landing' | 'app'
-type AppTab = 'channels' | 'marketplace' | 'analytics'
+type AppTab = 'channels' | 'marketplace' | 'analytics' | 'prediction'
 
 export interface SseEvent {
   type: string
@@ -55,7 +56,6 @@ export default function App() {
 
   // Wallet connection
   const [walletPublicKey, setWalletPublicKey] = useState<string | null>(null)
-  const [walletToken, setWalletToken] = useState<string | null>(null)
 
   // Agent selection
   const [selectedAgentId, setSelectedAgentId] = useState<string>('general')
@@ -189,13 +189,11 @@ export default function App() {
         <div className="flex items-center gap-4">
           {/* Wallet connection */}
           <WalletConnect
-            onConnect={(publicKey, token) => {
+            onConnect={(publicKey) => {
               setWalletPublicKey(publicKey)
-              setWalletToken(token)
             }}
             onDisconnect={() => {
               setWalletPublicKey(null)
-              setWalletToken(null)
             }}
           />
 
@@ -283,7 +281,6 @@ export default function App() {
                 budgetUsdc={budgetUsdc}
                 onTaskComplete={handleTaskComplete}
                 sseEvents={sseEvents as unknown as Parameters<typeof TaskPanel>[0]['sseEvents']}
-                selectedAgentId={selectedAgentId}
               />
 
               <SettlementPanel
@@ -345,6 +342,13 @@ export default function App() {
                 </div>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Cost Prediction Tab */}
+        {activeTab === 'prediction' && (
+          <div className="animate-fade-in max-w-4xl mx-auto">
+            <CostPredictionPanel />
           </div>
         )}
 

@@ -1,8 +1,22 @@
 /**
  * agent/marketplace.ts
  * 
- * Agent marketplace with multiple agent types and pricing.
+ * ✅ DYNAMIC AGENT MARKETPLACE
+ * 
+ * Agents are loaded from agents-config.json file, making it easy to:
+ * - Add new agents without code changes
+ * - Update pricing dynamically
+ * - Configure agent capabilities
+ * 
+ * For production, this could be extended to:
+ * - Database-backed agent registry
+ * - Real-time pricing updates
+ * - Agent reputation/rating system
+ * - Decentralized agent discovery
  */
+
+import { readFileSync } from 'fs'
+import { join } from 'path'
 
 export interface AgentType {
   id: string
@@ -13,39 +27,74 @@ export interface AgentType {
   category: 'research' | 'coding' | 'analysis' | 'general'
 }
 
-export const AGENT_MARKETPLACE: Record<string, AgentType> = {
-  researcher: {
-    id: 'researcher',
-    name: 'Research Agent',
-    description: 'Specialized in web search, data fetching, and information gathering',
-    baseRate: 0.05,
-    tools: ['web_search', 'data_fetch', 'reasoning'],
-    category: 'research',
-  },
-  coder: {
-    id: 'coder',
-    name: 'Coding Agent',
-    description: 'Expert in code generation, debugging, and technical problem solving',
-    baseRate: 0.08,
-    tools: ['code_exec', 'llm_call', 'reasoning', 'data_fetch'],
-    category: 'coding',
-  },
-  analyst: {
-    id: 'analyst',
-    name: 'Data Analyst',
-    description: 'Analyzes data, generates insights, and creates visualizations',
-    baseRate: 0.06,
-    tools: ['reasoning', 'data_fetch', 'web_search'],
-    category: 'analysis',
-  },
-  general: {
-    id: 'general',
-    name: 'General Agent',
-    description: 'Multi-purpose agent for various tasks',
-    baseRate: 0.04,
-    tools: ['reasoning', 'llm_call', 'data_fetch'],
-    category: 'general',
-  },
+interface AgentsConfig {
+  agents: AgentType[]
+}
+
+// Load agents from config file
+let AGENT_MARKETPLACE: Record<string, AgentType> = {}
+
+function loadAgentsFromConfig(): void {
+  try {
+    const configPath = join(process.cwd(), 'agents-config.json')
+    const configData = readFileSync(configPath, 'utf-8')
+    const config: AgentsConfig = JSON.parse(configData)
+    
+    AGENT_MARKETPLACE = {}
+    for (const agent of config.agents) {
+      AGENT_MARKETPLACE[agent.id] = agent
+    }
+    
+    console.log(`[Marketplace] Loaded ${config.agents.length} agents from config`)
+  } catch (err) {
+    console.error('[Marketplace] Failed to load agents config, using defaults:', err)
+    // Fallback to default agents
+    AGENT_MARKETPLACE = {
+      general: {
+        id: 'general',
+        name: 'General Agent',
+        description: 'Multi-purpose agent for various tasks',
+        baseRate: 0.04,
+        tools: ['reasoning', 'llm_call', 'data_fetch'],
+        category: 'general',
+      },
+      research: {
+        id: 'research',
+        name: 'Research Agent',
+        description: 'Specialized in web search, data fetching, and information gathering',
+        baseRate: 0.06,
+        tools: ['web_search', 'data_fetch', 'reasoning'],
+        category: 'research',
+      },
+      code: {
+        id: 'code',
+        name: 'Coding Agent',
+        description: 'Expert in code generation, debugging, and technical problem solving',
+        baseRate: 0.05,
+        tools: ['code_exec', 'llm_call', 'reasoning', 'data_fetch'],
+        category: 'coding',
+      },
+      data: {
+        id: 'data',
+        name: 'Data Analyst',
+        description: 'Analyzes data, generates insights, and creates visualizations',
+        baseRate: 0.07,
+        tools: ['reasoning', 'data_fetch', 'web_search'],
+        category: 'analysis',
+      },
+    }
+  }
+}
+
+// Load agents on module initialization
+loadAgentsFromConfig()
+
+/**
+ * Reload agents from config file.
+ * Useful for hot-reloading agent configuration.
+ */
+export function reloadAgents(): void {
+  loadAgentsFromConfig()
 }
 
 /**

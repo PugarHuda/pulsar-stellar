@@ -1,0 +1,28 @@
+{
+  "services": [
+    {
+      "agentId": "data-analyst-agent",
+      "serviceName": "Advanced Data Analysis",
+      "description": "Performs complex statistical analysis and generates insights",
+      "pricePerCall": 0.10,
+      "endpoint": "/api/agents/data-analyst/analyze",
+      "capabilities": ["statistical_analysis", "data_visualization", "trend_detection"]
+    },
+    {
+      "agentId": "code-reviewer-agent",
+      "serviceName": "Code Review Service",
+      "description": "Reviews code for bugs, security issues, and best practices",
+      "pricePerCall": 0.15,
+      "endpoint": "/api/agents/code-reviewer/review",
+      "capabilities": ["security_audit", "performance_analysis", "best_practices"]
+    },
+    {
+      "agentId": "research-agent",
+      "serviceName": "Deep Research",
+      "description": "Conducts comprehensive research across multiple sources",
+      "pricePerCall": 0.08,
+      "endpoint": "/api/agents/researcher/research",
+      "capabilities": ["web_search", "paper_analysis", "fact_checking"]
+    }
+  ]
+}

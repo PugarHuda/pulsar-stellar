@@ -393,6 +393,17 @@ async function deployChannelContract(params: {
   serverPublicKey: string
   budgetBaseUnits: bigint
 }): Promise<string> {
+  // Skip real deployment if WASM hash not set (test mode)
+  const wasmHash = process.env.CONTRACT_WASM_HASH
+  if (!wasmHash) {
+    console.log('[Pulsar] No CONTRACT_WASM_HASH set, using mock contract')
+    const hash = Buffer.from(params.channelId.replace(/-/g, ''), 'hex')
+    const padded = Buffer.alloc(32)
+    hash.copy(padded, 0, 0, Math.min(hash.length, 32))
+    const mockContractId = `C${Buffer.from(padded).toString('base64url').toUpperCase().slice(0, 55)}`
+    return mockContractId
+  }
+
   // Try to deploy a fresh contract instance per channel (best for production)
   try {
     console.log(`[Pulsar] Deploying fresh contract for channel ${params.channelId}...`)
@@ -434,81 +445,109 @@ export async function deployFreshContract(): Promise<string> {
   const WASM_HASH = process.env.CONTRACT_WASM_HASH ?? '394a957ec687ca7212c82af920af339fdabe685f1f92ee646d3c4c867874dacd'
   const serverKeypair = getServerKeypair()
 
-  const account = await sorobanRpc.getAccount(serverKeypair.publicKey())
-  const salt = Buffer.from(crypto.getRandomValues(new Uint8Array(32)))
-  const wasmHashBytes = Buffer.from(WASM_HASH, 'hex')
+  try {
+    console.log(`[Pulsar] Fetching account ${serverKeypair.publicKey()}...`)
+    const account = await sorobanRpc.getAccount(serverKeypair.publicKey())
+    console.log(`[Pulsar] Account sequence: ${account.sequence}`)
+    
+    const salt = Buffer.from(crypto.getRandomValues(new Uint8Array(32)))
+    const wasmHashBytes = Buffer.from(WASM_HASH, 'hex')
 
-  // Build InvokeHostFunction operation to create a new contract instance
-  const deployTx = new TransactionBuilder(account, {
-    fee: String(Number(BASE_FEE) * 100),
-    networkPassphrase: NETWORK_PASSPHRASE,
-  })
-    .addOperation(
-      xdr.Operation.fromXDR(
-        new xdr.Operation({
-          sourceAccount: null,
-          body: xdr.OperationBody.invokeHostFunction(
-            new xdr.InvokeHostFunctionOp({
-              hostFunction: xdr.HostFunction.hostFunctionTypeCreateContract(
-                new xdr.CreateContractArgs({
-                  contractIdPreimage: xdr.ContractIdPreimage.contractIdPreimageFromAddress(
-                    new xdr.ContractIdPreimageFromAddress({
-                      address: xdr.ScAddress.scAddressTypeAccount(
-                        xdr.PublicKey.publicKeyTypeEd25519(serverKeypair.rawPublicKey()),
-                      ),
-                      salt: salt as unknown as Buffer,
-                    }),
-                  ),
-                  executable: xdr.ContractExecutable.contractExecutableWasm(
-                    xdr.Hash.fromXDR(wasmHashBytes),
-                  ),
-                }),
-              ),
-              auth: [],
-            }),
-          ),
-        }).toXDR(),
-      ),
-    )
-    .setTimeout(60)
-    .build()
+    // Build InvokeHostFunction operation to create a new contract instance
+    const deployTx = new TransactionBuilder(account, {
+      fee: String(Number(BASE_FEE) * 100),
+      networkPassphrase: NETWORK_PASSPHRASE,
+    })
+      .addOperation(
+        xdr.Operation.fromXDR(
+          new xdr.Operation({
+            sourceAccount: null,
+            body: xdr.OperationBody.invokeHostFunction(
+              new xdr.InvokeHostFunctionOp({
+                hostFunction: xdr.HostFunction.hostFunctionTypeCreateContract(
+                  new xdr.CreateContractArgs({
+                    contractIdPreimage: xdr.ContractIdPreimage.contractIdPreimageFromAddress(
+                      new xdr.ContractIdPreimageFromAddress({
+                        address: xdr.ScAddress.scAddressTypeAccount(
+                          xdr.PublicKey.publicKeyTypeEd25519(serverKeypair.rawPublicKey()),
+                        ),
+                        salt: salt as unknown as Buffer,
+                      }),
+                    ),
+                    executable: xdr.ContractExecutable.contractExecutableWasm(
+                      xdr.Hash.fromXDR(wasmHashBytes),
+                    ),
+                  }),
+                ),
+                auth: [],
+              }),
+            ),
+          }).toXDR(),
+        ),
+      )
+      .setTimeout(60)
+      .build()
 
-  const simResult = await sorobanRpc.simulateTransaction(deployTx)
-  if ('error' in simResult) {
-    throw new Error(`Deploy simulation failed: ${simResult.error}`)
+    console.log('[Pulsar] Simulating contract deployment...')
+    const simResult = await sorobanRpc.simulateTransaction(deployTx)
+    if ('error' in simResult) {
+      throw new Error(`Deploy simulation failed: ${simResult.error}`)
+    }
+    console.log('[Pulsar] Simulation successful')
+
+    const preparedTx = await sorobanRpc.prepareTransaction(deployTx)
+    preparedTx.sign(serverKeypair)
+
+    console.log('[Pulsar] Sending deployment transaction...')
+    const sendResult = await sorobanRpc.sendTransaction(preparedTx)
+    if (sendResult.status === 'ERROR') {
+      throw new Error(`Deploy sendTransaction failed: ${JSON.stringify(sendResult.errorResult)}`)
+    }
+    console.log(`[Pulsar] Transaction sent: ${sendResult.hash}`)
+
+    // Poll for confirmation
+    console.log('[Pulsar] Waiting for confirmation...')
+    let getResult = await sorobanRpc.getTransaction(sendResult.hash)
+    let attempts = 0
+    while (getResult.status === 'NOT_FOUND' && attempts < 30) {
+      await sleep(1000)
+      getResult = await sorobanRpc.getTransaction(sendResult.hash)
+      attempts++
+      if (attempts % 5 === 0) {
+        console.log(`[Pulsar] Still waiting... (${attempts}/30)`)
+      }
+    }
+
+    if (getResult.status !== 'SUCCESS') {
+      throw new Error(`Deploy tx failed: ${getResult.status}`)
+    }
+
+    // Extract new contract address from return value
+    const successResult = getResult as { returnValue?: xdr.ScVal; status: string }
+    if (!successResult.returnValue) {
+      throw new Error('Deploy tx succeeded but no return value')
+    }
+
+    const newAddress = Address.fromScVal(successResult.returnValue)
+    const newContractId = newAddress.toString()
+    console.log(`[Pulsar] ✅ Deployed fresh contract: ${newContractId}`)
+    console.log(`[Pulsar] View on Stellar Expert: https://stellar.expert/explorer/testnet/contract/${newContractId}`)
+    return newContractId
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err)
+    console.error(`[Pulsar] ❌ Contract deployment FAILED: ${errorMsg}`)
+    
+    // Check if it's an account not found error
+    if (errorMsg.includes('Account not found') || errorMsg.includes('404')) {
+      console.error('[Pulsar] ERROR: Server account not found on testnet!')
+      console.error('[Pulsar] SOLUTION: Fund your server account with XLM:')
+      console.error(`[Pulsar]   1. Go to: https://laboratory.stellar.org/#account-creator?network=test`)
+      console.error(`[Pulsar]   2. Enter public key: ${getServerKeypair().publicKey()}`)
+      console.error(`[Pulsar]   3. Click "Get test network lumens"`)
+    }
+    
+    throw err
   }
-
-  const preparedTx = await sorobanRpc.prepareTransaction(deployTx)
-  preparedTx.sign(serverKeypair)
-
-  const sendResult = await sorobanRpc.sendTransaction(preparedTx)
-  if (sendResult.status === 'ERROR') {
-    throw new Error(`Deploy sendTransaction failed: ${JSON.stringify(sendResult.errorResult)}`)
-  }
-
-  // Poll for confirmation
-  let getResult = await sorobanRpc.getTransaction(sendResult.hash)
-  let attempts = 0
-  while (getResult.status === 'NOT_FOUND' && attempts < 30) {
-    await sleep(1000)
-    getResult = await sorobanRpc.getTransaction(sendResult.hash)
-    attempts++
-  }
-
-  if (getResult.status !== 'SUCCESS') {
-    throw new Error(`Deploy tx failed: ${getResult.status}`)
-  }
-
-  // Extract new contract address from return value
-  const successResult = getResult as { returnValue?: xdr.ScVal; status: string }
-  if (!successResult.returnValue) {
-    throw new Error('Deploy tx succeeded but no return value')
-  }
-
-  const newAddress = Address.fromScVal(successResult.returnValue)
-  const newContractId = newAddress.toString()
-  console.log(`[Pulsar] Deployed fresh contract: ${newContractId}`)
-  return newContractId
 }
 
 /**

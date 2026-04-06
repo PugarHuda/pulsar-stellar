@@ -110,15 +110,24 @@ export async function callClaude(prompt: string, apiKey?: string): Promise<strin
  */
 async function callOpenRouter(prompt: string, apiKey: string): Promise<string> {
   try {
+    // Sanitize prompt BEFORE sending to avoid encoding issues
+    const sanitizedPrompt = prompt.replace(/[^\x00-\x7F]/g, (c) => {
+      const map: Record<string, string> = {
+        '\u2014': '--', '\u2013': '-', '\u2018': "'", '\u2019': "'",
+        '\u201C': '"', '\u201D': '"', '\u2026': '...', '\u00B7': '*',
+      }
+      return map[c] ?? ' '
+    })
+
     const body: OpenRouterRequest = {
       model: PRIMARY_MODEL,
       max_tokens: 300,
       messages: [
         {
           role: 'system',
-          content: 'You are a concise AI agent. Respond in 2-3 sentences maximum. Be specific and actionable.',
+          content: 'You are a concise AI agent. Respond in 2-3 sentences maximum. Be specific and actionable. Use only ASCII characters in your response.',
         },
-        { role: 'user', content: prompt },
+        { role: 'user', content: sanitizedPrompt },
       ],
     }
 
@@ -135,7 +144,7 @@ async function callOpenRouter(prompt: string, apiKey: string): Promise<string> {
 
     if (!res.ok) {
       const errText = await res.text()
-      console.warn(`[Pulsar] OpenRouter error ${res.status}: ${errText.slice(0, 200)}`)
+      console.error(`[Pulsar] OpenRouter error ${res.status}: ${errText.slice(0, 200)}`)
       return generateMockLlmResponse(prompt)
     }
 
@@ -144,12 +153,12 @@ async function callOpenRouter(prompt: string, apiKey: string): Promise<string> {
     const model = data.model ?? PRIMARY_MODEL
 
     if (!text) {
+      console.warn('[Pulsar] OpenRouter returned empty response')
       return generateMockLlmResponse(prompt)
     }
 
-    // Sanitize: remove non-ASCII characters that can cause encoding issues
+    // Sanitize response: remove non-ASCII characters
     const sanitized = text.replace(/[^\x00-\x7F]/g, (c) => {
-      // Replace common Unicode punctuation with ASCII equivalents
       const map: Record<string, string> = {
         '\u2014': '--', '\u2013': '-', '\u2018': "'", '\u2019': "'",
         '\u201C': '"', '\u201D': '"', '\u2026': '...', '\u00B7': '*',
@@ -157,10 +166,11 @@ async function callOpenRouter(prompt: string, apiKey: string): Promise<string> {
       return map[c] ?? ' '
     })
 
-    console.log(`[Pulsar] OpenRouter response via ${model} (${sanitized.length} chars)`)
+    console.log(`[Pulsar] OpenRouter SUCCESS via ${model} (${sanitized.length} chars)`)
     return sanitized
   } catch (err) {
-    console.warn(`[Pulsar] OpenRouter call failed: ${err instanceof Error ? err.message : String(err)}`)
+    const errorMsg = err instanceof Error ? err.message : String(err)
+    console.error(`[Pulsar] OpenRouter call FAILED: ${errorMsg}`)
     return generateMockLlmResponse(prompt)
   }
 }

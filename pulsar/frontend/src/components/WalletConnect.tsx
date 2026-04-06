@@ -7,10 +7,10 @@
  */
 
 import { useState, useEffect } from 'react'
-import { isConnected, requestAccess, getAddress } from '@stellar/freighter-api'
+import { isConnected, requestAccess } from '@stellar/freighter-api'
 
 interface WalletConnectProps {
-  onConnect: (publicKey: string, token: string) => void
+  onConnect: (publicKey: string) => void
   onDisconnect: () => void
 }
 
@@ -45,7 +45,7 @@ export function WalletConnect({ onConnect, onDisconnect }: WalletConnectProps) {
     if (storedPublicKey && storedToken) {
       setPublicKey(storedPublicKey)
       setConnected(true)
-      onConnect(storedPublicKey, storedToken)
+      onConnect(storedPublicKey)
     }
   }, [onConnect])
 
@@ -116,7 +116,7 @@ export function WalletConnect({ onConnect, onDisconnect }: WalletConnectProps) {
       
       setPublicKey(userPublicKey)
       setConnected(true)
-      onConnect(userPublicKey, token)
+      onConnect(userPublicKey)
     } catch (err) {
       console.error('Wallet connection failed:', err)
       setError(err instanceof Error ? err.message : 'Failed to connect wallet')
@@ -155,7 +155,7 @@ export function WalletConnect({ onConnect, onDisconnect }: WalletConnectProps) {
       setPublicKey(demoPublicKey)
       setConnected(true)
       setShowDemoInput(false)
-      onConnect(demoPublicKey, token)
+      onConnect(demoPublicKey)
     } catch (err) {
       console.error('Demo login failed:', err)
       setError(err instanceof Error ? err.message : 'Failed to login')

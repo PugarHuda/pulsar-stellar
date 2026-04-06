@@ -59,6 +59,20 @@ This makes Pulsar ideal for AI agent billing where tasks involve dozens of LLM c
 - **Dark Mode**: Full dark mode support across UI
 - **Multi-user Support**: JWT authentication for multiple users
 
+### 🆕 Unique Differentiators (NEW!)
+- **🤖 AI Cost Prediction**: LLM-powered cost estimation before opening channels
+  - Analyzes task description to predict steps, cost, and optimal agent
+  - Provides confidence score and detailed cost breakdown
+  - Recommends budget with 20% safety buffer
+  - Works with LLM (when API key set) or heuristic fallback
+  
+- **🏆 Agent Reputation System**: On-chain proof of agent performance
+  - Tracks success rate, total tasks, and completion history
+  - Badge system: Bronze (70%), Silver (80%), Gold (90%), Platinum (95%)
+  - On-chain verification via transaction hashes
+  - Leaderboard for agent comparison
+  - Persistent storage across sessions
+
 ## What's Real vs Simulated
 
 | Component | Demo Mode | Production Mode |

@@ -30,10 +30,13 @@ export async function executeWebSearch(query: string): Promise<string> {
     const url = `https://api.duckduckgo.com/?q=${encodedQuery}&format=json&no_html=1&skip_disambig=1`
 
     const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 5000)
+    const timeoutId = setTimeout(() => controller.abort(), 10000) // Increased to 10s
 
     const response = await fetch(url, {
-      headers: { 'User-Agent': 'Pulsar-Agent/1.0' },
+      headers: { 
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/json',
+      },
       signal: controller.signal,
     })
 
@@ -45,29 +48,90 @@ export async function executeWebSearch(query: string): Promise<string> {
 
     const data = await response.json() as {
       AbstractText?: string
-      RelatedTopics?: Array<{ Text?: string }>
+      RelatedTopics?: Array<{ Text?: string; FirstURL?: string }>
       Heading?: string
+      AbstractURL?: string
     }
 
     // Extract relevant information
     const abstract = data.AbstractText || ''
     const topics = data.RelatedTopics?.slice(0, 3).map((t) => t.Text).filter(Boolean) || []
     const heading = data.Heading || query
+    const sourceUrl = data.AbstractURL || ''
 
     if (abstract) {
-      return `Web search for "${heading}": ${abstract.slice(0, 150)}${abstract.length > 150 ? '...' : ''} (Found ${topics.length} related topics)`
+      const summary = abstract.slice(0, 200)
+      console.log(`[Pulsar] Web search SUCCESS: "${heading}" - ${summary.length} chars`)
+      return `Web search for "${heading}": ${summary}${abstract.length > 200 ? '...' : ''} (Source: ${sourceUrl || 'DuckDuckGo'}, ${topics.length} related topics found)`
     }
 
     if (topics.length > 0) {
-      return `Web search for "${query}": Found ${topics.length} results including: ${topics[0]?.slice(0, 100)}...`
+      console.log(`[Pulsar] Web search SUCCESS: Found ${topics.length} topics for "${query}"`)
+      return `Web search for "${query}": Found ${topics.length} results including: ${topics[0]?.slice(0, 150)}... (Source: DuckDuckGo)`
     }
 
-    // Fallback to simulated if no results
-    return `Web search completed for "${query}" — found 8 relevant results from various sources`
+    // If no results, try alternative search
+    console.log(`[Pulsar] Web search: No instant answer for "${query}", trying alternative...`)
+    return await executeAlternativeSearch(query)
   } catch (err) {
-    console.warn(`[Pulsar] Web search failed: ${err instanceof Error ? err.message : err}`)
-    // Graceful fallback to simulated
-    return `Web search completed for "${query}" — found 8 relevant results (fallback mode)`
+    const errorMsg = err instanceof Error ? err.message : String(err)
+    console.error(`[Pulsar] Web search FAILED: ${errorMsg}`)
+    
+    // Try alternative search before falling back
+    try {
+      return await executeAlternativeSearch(query)
+    } catch {
+      // Last resort: return informative error
+      return `Web search attempted for "${query}" but encountered network issues. Please check internet connection. (Error: ${errorMsg.slice(0, 50)})`
+    }
+  }
+}
+
+/**
+ * Alternative search using Wikipedia API as fallback
+ */
+async function executeAlternativeSearch(query: string): Promise<string> {
+  try {
+    const encodedQuery = encodeURIComponent(query)
+    const url = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodedQuery}`
+
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 8000)
+
+    const response = await fetch(url, {
+      headers: { 
+        'User-Agent': 'Pulsar-Agent/1.0 (https://github.com/PugarHuda/pulsar-stellar)',
+        'Accept': 'application/json',
+      },
+      signal: controller.signal,
+    })
+
+    clearTimeout(timeoutId)
+
+    if (!response.ok) {
+      throw new Error(`Wikipedia API returned ${response.status}`)
+    }
+
+    const data = await response.json() as {
+      extract?: string
+      title?: string
+      content_urls?: { desktop?: { page?: string } }
+    }
+
+    const extract = data.extract || ''
+    const title = data.title || query
+    const pageUrl = data.content_urls?.desktop?.page || ''
+
+    if (extract) {
+      const summary = extract.slice(0, 200)
+      console.log(`[Pulsar] Alternative search SUCCESS (Wikipedia): "${title}"`)
+      return `Web search for "${title}": ${summary}${extract.length > 200 ? '...' : ''} (Source: Wikipedia ${pageUrl})`
+    }
+
+    throw new Error('No results from alternative search')
+  } catch (err) {
+    console.warn(`[Pulsar] Alternative search also failed: ${err instanceof Error ? err.message : err}`)
+    throw err
   }
 }
 

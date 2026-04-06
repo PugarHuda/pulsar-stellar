@@ -26,6 +26,7 @@ import { callLLM, isLLMAvailable } from './llm.js'
 import { executeWebSearch, executeCode, executeDataFetch } from './tools.js'
 import { usdcToBaseUnits, baseUnitsToUsdc } from '../stellar/config.js'
 import { broadcast } from '../api/sse.js'
+import { updateAgentReputation } from './reputation.js'
 import {
   PulsarError,
   PulsarErrorCode,
@@ -56,18 +57,19 @@ export interface RunAgentResult {
 // ─── Agent Pricing ────────────────────────────────────────────────────────────
 
 /**
- * Get cost per step based on agent type.
+ * Get cost multiplier based on agent type.
  * Different agents have different capabilities and pricing.
+ * Multiplier is applied to base step costs in generateTaskSteps().
  */
-function getAgentPricing(agentId?: string): number {
-  const pricing: Record<string, number> = {
-    'general': 0.04,    // $0.04 per step - balanced
-    'research': 0.06,   // $0.06 per step - more web searches
-    'code': 0.05,       // $0.05 per step - code execution
-    'data': 0.07,       // $0.07 per step - data analysis
+function getAgentCostMultiplier(agentId?: string): number {
+  const multipliers: Record<string, number> = {
+    'general': 1.0,    // 1.0x - baseline pricing
+    'research': 1.5,   // 1.5x - more web searches and analysis
+    'code': 1.25,      // 1.25x - code execution capabilities
+    'data': 1.75,      // 1.75x - advanced data analysis
   }
   
-  return pricing[agentId || 'general'] || 0.04
+  return multipliers[agentId || 'general'] || 1.0
 }
 
 // ─── Runner ───────────────────────────────────────────────────────────────────
@@ -106,13 +108,13 @@ export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> 
   // Mark channel as running
   updateChannel(channelId, { status: 'running' })
 
-  const steps = generateTaskSteps(taskDescription)
+  // Get agent-specific cost multiplier
+  const costMultiplier = getAgentCostMultiplier(agentId)
+  console.log(`[Pulsar] Running agent '${agentId || 'general'}' with cost multiplier ${costMultiplier}x`)
+
+  const steps = generateTaskSteps(taskDescription, costMultiplier)
   const budgetUsdc = baseUnitsToUsdc(channel.budgetBaseUnits)
   const useRealLlm = isLLMAvailable()
-  
-  // Get agent-specific pricing
-  const costPerStepUsdc = getAgentPricing(agentId)
-  console.log(`[Pulsar] Running agent '${agentId || 'general'}' with pricing $${costPerStepUsdc}/step`)
 
   let completedSteps = 0
   let cumulativeCostUsdc = 0
@@ -209,6 +211,20 @@ export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> 
     remainingBudgetUsdc: finalRemainingBudget,
   }
   broadcast('task_complete', completeEvent)
+
+  // Update agent reputation (track success)
+  if (agentId) {
+    try {
+      updateAgentReputation({
+        agentId,
+        success: true,
+        amountEarned: cumulativeCostUsdc,
+        // txHash will be added when channel is settled
+      })
+    } catch (err) {
+      console.error('[Reputation] Failed to update reputation:', err)
+    }
+  }
 
   return {
     channelId,

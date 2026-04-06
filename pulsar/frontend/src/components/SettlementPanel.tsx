@@ -37,9 +37,11 @@ export function SettlementPanel({
   const [error, setError] = useState<string | null>(null)
   const [settlement, setSettlement] = useState<SettlementResult | null>(null)
   const [copiedTxHash, setCopiedTxHash] = useState(false)
+  const [showConfirmModal, setShowConfirmModal] = useState(false)
 
   async function handleSettle() {
     if (!channelId) return
+    setShowConfirmModal(false)
     setError(null)
     setLoading(true)
 
@@ -121,19 +123,59 @@ export function SettlementPanel({
           )}
 
           <button
-            onClick={handleSettle}
+            onClick={() => setShowConfirmModal(true)}
             disabled={loading || !channelId || !taskComplete}
             className="w-full py-3 px-4 bg-green-600 hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-colors"
           >
-            {loading ? (
-              <span className="flex items-center justify-center gap-2">
-                <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                Settling on Stellar...
-              </span>
-            ) : (
-              'Settle Channel'
-            )}
+            Settle Channel
           </button>
+
+          {/* Confirmation Modal */}
+          {showConfirmModal && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 animate-fade-in">
+                <h3 className="text-lg font-bold text-gray-900 mb-4">
+                  Confirm Settlement
+                </h3>
+                
+                <div className="bg-gray-50 rounded-lg p-4 mb-4 space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-600">Server will receive:</span>
+                    <span className="font-semibold text-gray-900">
+                      {totalCostUsdc.toFixed(4)} USDC
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-600">You'll get back:</span>
+                    <span className="font-bold text-green-600">
+                      {remainingBudgetUsdc.toFixed(4)} USDC
+                    </span>
+                  </div>
+                  <div className="border-t border-gray-200 pt-2 mt-2">
+                    <p className="text-xs text-gray-500">
+                      This will submit 1 transaction to Stellar Testnet to close the channel.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setShowConfirmModal(false)}
+                    className="flex-1 py-2.5 px-4 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSettle}
+                    disabled={loading}
+                    className="flex-1 py-2.5 px-4 bg-green-600 hover:bg-green-700 disabled:bg-gray-300 text-white font-semibold rounded-lg transition-colors"
+                  >
+                    {loading ? 'Settling...' : 'Confirm'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {!taskComplete && (
             <p className="text-xs text-center text-gray-400">

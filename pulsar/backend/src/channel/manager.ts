@@ -546,6 +546,9 @@ export async function deployFreshContract(): Promise<string> {
 
 /**
  * Invoke open_channel on an existing Soroban contract instance.
+ * 
+ * IMPORTANT: Uses the userPublicKey from params (connected wallet), not USER_SECRET_KEY.
+ * The transaction must be signed by the actual user wallet, not the demo keypair.
  */
 async function invokeOpenChannel(
   contractId: string,
@@ -557,12 +560,28 @@ async function invokeOpenChannel(
 ): Promise<string> {
   try {
     const serverKeypair = getServerKeypair()
-    const userKeypair = getUserKeypair()
     const contract = new Contract(contractId)
 
-    // Use USER as transaction source — this implicitly authorizes sender.require_auth()
-    // and token.transfer from sender (source account authorization)
-    const userAccount = await sorobanRpc.getAccount(userKeypair.publicKey())
+    // CRITICAL: Use the actual user's public key from params (connected wallet)
+    // NOT the demo USER_SECRET_KEY - that's only for testing without a real wallet
+    const userPublicKey = params.userPublicKey
+    
+    // For demo/testing: if user is using the demo key, we can sign with USER_SECRET_KEY
+    // For real wallet: user must sign the transaction in their wallet (not implemented yet)
+    const demoUserKeypair = getUserKeypair()
+    const isDemoUser = userPublicKey === demoUserKeypair.publicKey()
+    
+    if (!isDemoUser) {
+      // Real wallet user - we can't sign for them!
+      throw new Error(
+        `Cannot open channel: wallet integration not yet implemented. ` +
+        `Please use the demo user key: ${demoUserKeypair.publicKey()} ` +
+        `or click "Demo key" button in the UI.`
+      )
+    }
+
+    // Use demo user account for transaction
+    const userAccount = await sorobanRpc.getAccount(userPublicKey)
     const expiry = Math.floor(Date.now() / 1000) + 3600
 
     const tx = new TransactionBuilder(userAccount, {
@@ -572,7 +591,7 @@ async function invokeOpenChannel(
       .addOperation(
         contract.call(
           'open_channel',
-          nativeToScVal(params.userPublicKey, { type: 'address' }),
+          nativeToScVal(userPublicKey, { type: 'address' }),
           nativeToScVal(serverKeypair.publicKey(), { type: 'address' }),
           nativeToScVal(USDC_SAC_ADDRESS, { type: 'address' }),
           nativeToScVal(params.budgetBaseUnits, { type: 'i128' }),
@@ -588,9 +607,9 @@ async function invokeOpenChannel(
       throw new Error(`Soroban simulation failed: ${simResult.error}`)
     }
 
-    // Prepare and sign with user keypair (source account = implicit auth)
+    // Prepare and sign with demo user keypair
     const preparedTx = await sorobanRpc.prepareTransaction(tx)
-    preparedTx.sign(userKeypair)
+    preparedTx.sign(demoUserKeypair)
 
     const sendResult = await sorobanRpc.sendTransaction(preparedTx)
     if (sendResult.status === 'ERROR') {
@@ -606,15 +625,35 @@ async function invokeOpenChannel(
     }
 
     if (getResult.status !== 'SUCCESS') {
-      const resultMeta = getResult as { resultXdr?: string; status: string }
-      throw new Error(`open_channel tx failed: ${getResult.status}${resultMeta.resultXdr ? ` (${resultMeta.resultXdr})` : ''}`)
+      const resultMeta = getResult as { 
+        resultXdr?: string
+        resultMetaXdr?: string
+        status: string 
+      }
+      
+      // Try to extract detailed error from XDR
+      let errorDetail = ''
+      try {
+        if (resultMeta.resultXdr) {
+          const result = xdr.TransactionResult.fromXDR(resultMeta.resultXdr, 'base64')
+          errorDetail = ` | Result: ${JSON.stringify(result)}`
+        }
+      } catch {
+        // Ignore XDR parsing errors
+      }
+      
+      throw new Error(
+        `open_channel tx failed: ${getResult.status}${errorDetail}`
+      )
     }
 
     console.log(`[Pulsar] open_channel success: https://stellar.expert/explorer/testnet/tx/${sendResult.hash}`)
     return contractId
   } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err)
+    console.error(`[Pulsar] open_channel ERROR: ${errorMsg}`)
     throw new Error(
-      `Failed to invoke open_channel on Soroban contract: ${err instanceof Error ? err.message : String(err)}`,
+      `Failed to invoke open_channel on Soroban contract: ${errorMsg}`,
     )
   }
 }

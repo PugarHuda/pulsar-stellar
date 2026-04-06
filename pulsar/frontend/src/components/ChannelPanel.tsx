@@ -220,8 +220,19 @@ export function ChannelPanel({ onChannelOpened, aiMode, walletPublicKey, selecte
               )}
             </div>
             {walletPublicKey && (
-              <p className="text-xs text-gray-500 mt-1">
-                Using connected wallet address
+              <div className="mt-2 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <p className="text-xs text-yellow-800 font-medium mb-1">
+                  ⚠️ Wallet signing not yet implemented
+                </p>
+                <p className="text-xs text-yellow-700">
+                  For now, please disconnect your wallet and use the "Demo key" button to test the system.
+                  Full wallet integration coming soon!
+                </p>
+              </div>
+            )}
+            {!walletPublicKey && userPublicKey && (
+              <p className="text-xs text-green-600 mt-1">
+                ✓ Using demo account (funded with testnet USDC)
               </p>
             )}
           </div>
